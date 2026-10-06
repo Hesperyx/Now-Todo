@@ -1,0 +1,94 @@
+# 静态分析配置
+#
+# 用法：`flutter analyze`（或 IDE 实时提示）。
+# 规则集基于 package:flutter_lints，额外启用了更严格的语言检查与一组加固 lint。
+#
+# 原则：告警是信号，不是噪音。要消除告警请改代码；
+# 确认是误报时改这里并说明理由，不要在业务代码里堆 `// ignore`。
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  # 代码生成产物不参与静态分析。
+  # 它们由 build_runner 生成、不手写、不受本仓库代码风格约束；
+  # 排除后 analyze 输出只反映人手写的代码。
+  # 注意：排除不影响编译，生成的 .g.dart 依然会被编译进产物。
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/*.mocks.dart"
+    - "build/**"
+    - ".dart_tool/**"
+
+  language:
+    # 隐式向下转型是运行期崩溃的常见来源，禁止。
+    strict-casts: true
+    # 无法推断类型的位置必须显式标注，禁止 fallback 到 dynamic。
+    strict-inference: true
+    # 禁止裸泛型（如 List 而非 List<String>）。
+    strict-raw-types: true
+
+  errors:
+    # ── 升级为错误：这些是真 Bug，不允许进主干 ──
+    missing_required_param: error
+    missing_return: error
+    invalid_annotation_target: error
+
+    # ── 降级为提示： ──
+    # TODO 是允许的工程记录手段，不需要每次 analyze 都刷屏。
+    todo: ignore
+
+linter:
+  rules:
+    # ── 正确性 ──
+    always_declare_return_types: true
+    avoid_empty_else: true
+    avoid_slow_async_io: true
+    avoid_type_to_string: true
+    cancel_subscriptions: true
+    close_sinks: true
+    control_flow_in_finally: true
+    empty_statements: true
+    hash_and_equals: true
+    iterable_contains_unrelated_type: true
+    list_remove_unrelated_type: true
+    literal_only_boolean_expressions: true
+    no_adjacent_strings_in_list: true
+    no_duplicate_case_values: true
+    test_types_in_equals: true
+    throw_in_finally: true
+    unrelated_type_equality_checks: true
+    valid_regexps: true
+    null_check_on_nullable_type_parameter: true
+    prefer_void_to_null: true
+
+    # ── 异步 ──
+    # 忘记 await 是离线应用数据写入丢失的头号原因，必须报。
+    unawaited_futures: true
+    await_only_futures: true
+    unnecessary_await_in_return: true
+
+    # ── 可维护性 ──
+    avoid_dynamic_calls: true
+    avoid_print: true
+    avoid_relative_lib_imports: true
+    avoid_returning_null_for_void: true
+    directives_ordering: true
+    join_return_with_assignment: true
+    non_constant_identifier_names: true
+    prefer_final_locals: true
+    prefer_single_quotes: true
+    unnecessary_lambdas: true
+    unnecessary_null_aware_assignments: true
+    unnecessary_parenthesis: true
+    unnecessary_statements: true
+    use_string_buffers: true
+
+    # ── 阅读体验 ──
+    # 字符串里混入 HTML 标签通常是笔误（如 `</b>` 会被静默吞掉）。
+    unintended_html_in_doc_comment: true
+    sized_box_for_whitespace: true
+    sort_child_properties_last: true
+
+# 完整规则列表：https://dart.dev/lints
+# 分析器选项：https://dart.dev/tools/analysis

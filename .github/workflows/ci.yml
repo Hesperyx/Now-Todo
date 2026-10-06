@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支上的新推送会取消上一次仍在跑的构建，避免排队。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 与本地开发工具链保持一致。升级此版本时，请先确认
+  # docs/ARCHITECTURE.md §4 的依赖锁定是否也随之解除。
+  FLUTTER_VERSION: '3.35.5'
+
+jobs:
+  verify:
+    name: 格式 · 分析 · 测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 输出工具链版本
+        run: flutter --version
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      # 生成产物（*.g.dart）提交入库，因此必须校验它与源码同步。
+      # 项目约定：改了 Drift 表定义就要重跑 build_runner 并提交产物。
+      - name: 校验代码生成产物与源码一致
+        run: |
+          dart run build_runner build
+          if ! git diff --quiet; then
+            echo "::error::生成的 *.g.dart 与源码不一致。请在本地运行 dart run build_runner build 并提交产物。"
+            git diff --stat
+            exit 1
+          fi
+
+      - name: 格式检查
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: 静态分析
+        run: flutter analyze
+
+      - name: 单元测试与 Widget 测试
+        run: flutter test --reporter expanded
+
+  android:
+    name: Android 构建
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      - name: 构建 Android debug 包
+        run: flutter build apk --debug
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: now-todo-android-debug
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,28 @@
+# 统一换行符：仓库里一律存 LF。
+#
+# 项目 CI 跑在 Linux（ubuntu-latest），而主要开发机是 Windows。Windows 上
+# `core.autocrlf=true`（Git for Windows 默认）会把工作区变成 CRLF，于是同一个
+# 文件在不同机器上写入仓库的字节可能不同，diff 里会混进整文件级的换行符噪声。
+# 固定成 LF 之后，检出行为不依赖每个人的 git 配置。
+* text=auto eol=lf
+
+# 例外：Windows 批处理必须保留 CRLF，否则 cmd.exe 解析会出错。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件：任何换行符转换都会损坏它们。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.jar binary
+*.apk binary
+*.aab binary
+*.keystore binary
+*.jks binary

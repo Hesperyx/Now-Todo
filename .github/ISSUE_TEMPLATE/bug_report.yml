@@ -1,0 +1,112 @@
+name: Bug 报告
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 提交前请先确认
+
+        - 已搜索过现有 Issue，没有重复。
+        - 你使用的是从 [Releases](../../releases) 下载的版本，或自行构建的最新 `main`。
+
+        > ### ⚠️ 请勿粘贴个人数据
+        > 不要提交真实的任务内容、备份 JSON 文件、设备标识或任何隐私信息。
+        > 定位问题只需要**脱敏**后的描述和日志。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索过现有 Issue，确认没有重复
+          required: true
+        - label: 我确认以下内容不含我的真实任务数据或隐私信息
+          required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: 应用版本
+      description: 在「设置 → 关于」中查看
+      placeholder: 例如 1.0.0 (1)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Android
+        - iOS
+        - Windows 桌面（开发预览）
+        - 其它
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: 系统版本
+      placeholder: 例如 Android 15 / iOS 18.2 / Windows 11 23H2
+    validations:
+      required: true
+
+  - type: input
+    id: install-source
+    attributes:
+      label: 安装来源
+      description: 应用商店、GitHub Releases，还是自行构建？
+      placeholder: 例如 GitHub Releases / 自行构建 main 分支
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 尽量写到别人能照着复现的程度
+      placeholder: |
+        1. 打开应用
+        2. 点击右下角 + 号
+        3. 设置截止日期为明天
+        4. ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 有报错信息请贴出，但先确认其中不含个人数据
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 复现频率
+      options:
+        - 每次都出现
+        - 经常出现
+        - 偶尔出现
+        - 只出现过一次
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 截图、录屏、是否开启通知权限、是否使用了导入的旧数据等
+    validations:
+      required: false
