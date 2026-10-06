@@ -29,6 +29,19 @@ dependencies:
     sdk: flutter
 
   # iOS 不在目标平台内，因此不引入 cupertino_icons（其唯一用途是 iOS 风格图标）。
+  #
+  # 代价是 Android release 构建会打印一条警告：
+  #   Expected to find fonts for (packages/cupertino_icons/CupertinoIcons,
+  #   MaterialIcons), but found (MaterialIcons).
+  # 这是 Flutter 框架本身带来的，与本项目的代码和依赖无关：任何 MaterialApp
+  # 都会经过 `PageTransitionsTheme`，而 `material/page_transitions_theme.dart`
+  # 无条件 `import 'package:flutter/cupertino.dart'`，其默认构造还会为
+  # iOS/macOS 实例化 `CupertinoPageTransitionsBuilder`，于是
+  # `cupertino/icons.dart` 里每个 `CupertinoIcons` 常量都带着
+  # `fontPackage: 'cupertino_icons'` 进入了编译产物；图标字体裁剪器据此
+  # 期待一个并不存在的字体族，就发了这条警告。
+  # 本应用在 Android 上只渲染 `Icons.*`，不会请求任何 Cupertino 字形，
+  # 所以这条警告是噪音、可以忽略；为消警告重新引入 cupertino_icons 不划算。
   flutter_riverpod: 2.6.1
   go_router: ^17.2.3
   drift: ^2.31.0
@@ -47,6 +60,11 @@ dependencies:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+
+  # 在真机/模拟器上跑的端到端验证。单元测试证明不了「系统真的把通知发出来了」，
+  # 这类断言只能上设备。跑法见 integration_test/ 里的文件头注释。
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动底色（浅色）与 `lib/core/theme/app_theme.dart` 的种子色同源：
+         图标是深青渐变，启动页就用它的中段色，从图标到界面之间没有颜色跳变。
+         深色下换 `values-night/colors.xml` 里的近黑青色——启动瞬间是最刺眼的一段，
+         深色模式用户不该被一屏亮青色闪一下。 -->
+    <color name="launch_background">#2E6B5E</color>
+</resources>

@@ -117,7 +117,7 @@ class _AboutPageState extends ConsumerState<AboutPage> {
                   Text(
                     '一个离线的待办应用。所有任务只保存在这台设备上，'
                     '没有账号，没有云端同步，核心功能不需要网络权限。'
-                    '换个设备要迁移数据，只能靠你自己导出再导入。',
+                    '换个设备要迁移数据，在「设置 → 数据」里导出再导入就行。',
                     style: theme.textTheme.bodyMedium,
                   ),
                   const Divider(height: 40),

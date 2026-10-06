@@ -48,6 +48,20 @@ flutter run -d windows  # 桌面是最快的调试目标
 
 > 若 `flutter doctor` 报 Android licenses 未接受，运行 `flutter doctor --android-licenses`。
 
+> **Android 构建的一个坑**：如果 `flutter build apk` 失败，而 `* What went wrong:` 下面
+> 只有一个裸的版本号（例如 `25.0.3`），那是 JDK 与 Gradle 版本不兼容。Flutter 找 JDK 的
+> 顺序是 `flutter config --jdk-dir` → **Android Studio 自带的 JBR** → `JAVA_HOME` → `PATH`
+> （见 `flutter_tools/lib/src/android/java.dart` 的 `_findJavaHome`）。Android Studio 优先于
+> `JAVA_HOME`，所以只设环境变量不管用；新版 Android Studio 自带的 JBR 可能新到 Gradle
+> 跑不起来。修法：
+>
+> ```bash
+> # 指向一个 JDK 17（AGP 8.x 的推荐版本）
+> flutter config --jdk-dir="/path/to/jdk-17"
+> # 想恢复自动探测
+> flutter config --jdk-dir=
+> ```
+
 ## 项目结构
 
 ```

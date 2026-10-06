@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标（Android 8+）。
+
+     三层：背景（渐变）＋ 前景（脚本生成，符号收在 66dp 安全圆内）＋ 单色（Android 13
+     的「主题图标」用，放在 anydpi-v33 里，因为 <monochrome> 是 API 33 才认识的元素）。
+
+     前景 PNG 的画布是 108dp、符号只占中间 60dp：这是自适应图标的规格，
+     不是把图缩错了——启动器会按自己选的形状（圆 / 方 / 水滴）裁掉四周，
+     所以设计必须留出这一圈余量。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

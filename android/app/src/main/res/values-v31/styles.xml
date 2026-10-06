@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12 起系统接管启动画面：背景色、图标与动画由平台画，
+         应用自己的 windowBackground 不再是唯一来源。这里只指定背景色，
+         图标用平台的默认值（就是应用图标），不额外做一张启动图——
+         Android 12 会把它裁进一个圆里，自制图很容易被裁掉边。
+
+         **这个文件在深色模式下不会被读到**：`values-night` 的优先级高于
+         `values-v31`（限定符里版本号排最后），所以深色还要一份
+         `values-night-v31/styles.xml`。两边的 item 必须一样，
+         否则「深色下启动页少了新属性」这种问题只会出现在深色用户那里。 -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">@color/launch_background</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

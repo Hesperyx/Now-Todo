@@ -17,6 +17,11 @@ analyzer:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
     - "**/*.mocks.dart"
+    # drift 依据 drift_schemas/ 快照生成的反向建库代码（test/data/generated_migrations/）。
+    # 同样是产物、不手写，风格不受本仓库约束——例如它内部用的是裸泛型
+    # `TableInfo<Table, dynamic>`，会撞上下面的 strict-raw-types。
+    # 注意：排除只影响 analyze，这些文件依然会被编译，迁移测试照跑。
+    - "**/generated_migrations/**"
     - "build/**"
     - ".dart_tool/**"
 

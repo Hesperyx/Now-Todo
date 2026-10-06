@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色模式下的启动底色：种子色的近黑版，保持同一个色相。
+         比纯黑亮一点点，免得和随后出现的深色界面（surface 不是纯黑）之间闪一下。 -->
+    <color name="launch_background">#101A18</color>
+</resources>

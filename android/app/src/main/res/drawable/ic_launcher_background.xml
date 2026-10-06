@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标的背景层。
+
+     颜色与 `tool/app_icon/generate_icons.py` 里的 BRAND_TOP / BRAND_BOTTOM 必须一致：
+     传统图标（PNG，脚本生成）与自适应图标（这里 + 前景 PNG）是同一套设计的两条路，
+     任何一边改了颜色，另一边也要改，否则 Android 8 上下来回切启动器会看到两种深青。
+
+     为什么是渐变：纯色在大尺寸图标上偏平，而图标里没有别的渐变元素，
+     一点纵向渐变就足够把它和「一个圆角方块」区分开。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="linear"
+        android:angle="270"
+        android:startColor="#357A6B"
+        android:endColor="#1F4B42" />
+</shape>

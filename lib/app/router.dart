@@ -2,7 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/about/about_page.dart';
+import '../features/focus/achievements_page.dart';
+import '../features/focus/focus_page.dart';
+import '../features/focus/stats_page.dart';
 import '../features/home/home_page.dart';
+import '../features/organization/lists_page.dart';
+import '../features/organization/tags_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/task_editor/task_editor_page.dart';
 
@@ -24,6 +29,28 @@ abstract final class AppRoutes {
 
   static const String settings = '/settings';
   static const String about = '/about';
+
+  /// 清单管理。
+  static const String lists = '/lists';
+
+  /// 标签管理。
+  static const String tags = '/tags';
+
+  /// 专注计时。
+  static const String focus = '/focus';
+
+  /// 专注统计。
+  static const String stats = '/stats';
+
+  /// 成就徽章。
+  static const String achievements = '/achievements';
+
+  /// 出发时已经知道要给哪条任务计时。
+  ///
+  /// 用查询参数而不是路径段：`/focus` 本身就是一条完整的地址，
+  /// 带上任务只是给它加了个初始值，不该变成两套路由。
+  static String focusFor(String taskId) =>
+      '$focus?task=${Uri.encodeQueryComponent(taskId)}';
 }
 
 /// 路由表。
@@ -55,6 +82,27 @@ final Provider<GoRouter> appRouterProvider = Provider<GoRouter>((Ref ref) {
       GoRoute(
         path: AppRoutes.about,
         builder: (context, state) => const AboutPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.focus,
+        builder: (context, state) =>
+            FocusPage(taskId: state.uri.queryParameters['task']),
+      ),
+      GoRoute(
+        path: AppRoutes.lists,
+        builder: (context, state) => const ListsPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.tags,
+        builder: (context, state) => const TagsPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.stats,
+        builder: (context, state) => const StatsPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.achievements,
+        builder: (context, state) => const AchievementsPage(),
       ),
     ],
   );

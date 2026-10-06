@@ -45,3 +45,16 @@ enum ThemeModeSetting { system, light, dark }
 
 /// 首页默认展示的视图。
 enum DefaultView { today, all, completed }
+
+/// 一条专注会话的类型。
+///
+/// 休息也算会话：它们同样占用了时间，同样要落库，否则「专注了多久」的统计
+/// 里会夹进休息时长而不自知。
+enum FocusSessionKind { focus, shortBreak, longBreak }
+
+/// 计时器的走向。
+///
+/// 两种模式共用同一套字段（`startedAt` / `pausedMillis` / `pausedAt`），
+/// 差别只在「有没有一个终点」：倒计时有 `plannedSeconds`，走满了算完成；
+/// 正计时没有终点，用户按停就是结束。**不要**为它们写两套状态机。
+enum FocusTimerMode { countUp, countDown }

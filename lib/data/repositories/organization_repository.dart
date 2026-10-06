@@ -164,6 +164,38 @@ ORDER BY g.name COLLATE NOCASE ASC;
         );
   }
 
+  /// 新建标签，返回它的 id。
+  ///
+  /// 已经存在同名标签时**返回已有那条的 id，不新建**。重名判断跟
+  /// `TaskRepository._ensureTag` 一样是大小写敏感的精确匹配，与
+  /// `tags_name` 唯一索引的语义对齐：`Work` 和 `work` 是两个标签。
+  ///
+  /// 为什么不直接插、让唯一索引抛异常回去：唯一约束异常要经过 drift 的
+  /// 类型再翻译成人话，链条太长，而且抛出来的那一刻调用方已经不知道
+  /// 「该复用的是哪一条」了。先查后插能顺手把 id 还回去。
+  Future<String> create(String name, {int? color}) async {
+    final String trimmed = name.trim();
+    final Tag? existing =
+        await (_db.select(_db.tags)
+              ..where((t) => t.name.equals(trimmed))
+              ..limit(1))
+            .getSingleOrNull();
+    if (existing != null) return existing.id;
+
+    final String id = newId();
+    await _db
+        .into(_db.tags)
+        .insert(
+          TagsCompanion.insert(
+            id: id,
+            name: trimmed,
+            color: Value(color),
+            createdAt: nowUtcMillis(),
+          ),
+        );
+    return id;
+  }
+
   Future<void> rename(String id, String name) async {
     await (_db.update(_db.tags)..where((t) => t.id.equals(id))).write(
       TagsCompanion(name: Value(name.trim())),

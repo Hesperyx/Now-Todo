@@ -24,8 +24,23 @@ class RecurrenceRules extends Table {
   IntColumn get frequency => intEnum<RecurrenceFrequency>()();
 
   /// 间隔倍数。`frequency = weekly` 且 `interval = 2` 表示「每两周」。
-  /// 恒 `>= 1`，由应用层保证（数据库 CHECK 约束见迁移脚本）。
+  /// 恒 `>= 1`，由应用层保证（`RecurrenceRule.normalized()` 会在写入前收口）。
   IntColumn get interval => integer().withDefault(const Constant(1))();
+
+  /// 系列的锚点（本地时间的 UTC 毫秒）：整个系列的日期都由它推算。
+  ///
+  /// 存锚点而不是「上一条实例的日期」是刻意的：某一条被单独挪到下周三，
+  /// 不该把「每周一」这个系列从此拖成周三。下一条的日期 = 锚点 +
+  /// `n × interval`，n 从锚点算起。
+  ///
+  /// **存的是完整时刻，不是本地零点**：带时刻的重复任务（每天 09:30）
+  /// 要保住那个时刻；只精确到日的任务，锚点本来就落在本地零点上。
+  ///
+  /// **默认值 0 只是给 SQLite 用的**：给已有的表加一个非空列时它要求
+  /// 有默认值，否则整条 `ALTER TABLE` 会被拒。0 换算出来是 1970 年，
+  /// 一眼能看出是「没写过」，`RecurrenceRepository` 读到 0 时会退回用
+  /// 规则的创建时间兜底。
+  IntColumn get startsOn => integer().withDefault(const Constant(0))();
 
   /// 每周重复时生效：`1`=周一 … `7`=周日，逗号分隔，如 `"1,3,5"`。
   /// 为空表示「与起始日同一星期几」。
@@ -40,6 +55,13 @@ class RecurrenceRules extends Table {
   /// 不设默认上界：用户没说要停就一直重复。但 UI 上会提示「无限重复」，
   /// 免得用户以为设完就完事了。
   IntColumn get endDate => integer().nullable()();
+
+  /// 最多生成几条（**含第 1 条**）。`null` = 不限次数。
+  ///
+  /// 计数口径是「这个系列现在有几条任务」，所以删掉一条历史实例会让系列
+  /// 少算一次、也就是多跑一次。这是刻意的取舍：与其维护一个会跟现实
+  /// 走散的计数器，不如每次当场数一遍。
+  IntColumn get endCount => integer().nullable()();
 
   IntColumn get createdAt => integer()();
 

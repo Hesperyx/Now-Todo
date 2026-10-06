@@ -6,7 +6,9 @@ import 'package:now_todo/app/providers.dart';
 import 'package:now_todo/core/models/entities.dart';
 import 'package:now_todo/core/models/enums.dart';
 import 'package:now_todo/core/models/task_query.dart';
+import 'package:now_todo/core/utils/time.dart';
 import 'package:now_todo/data/database/app_database.dart';
+import 'package:now_todo/data/repositories/focus_session_repository.dart';
 import 'package:now_todo/data/repositories/task_repository.dart';
 
 import 'helpers/test_database.dart';
@@ -56,6 +58,15 @@ void main() {
   /// 这个坑是实测踩出来的：`flutter_tester` 跑满 14 分钟只花了 0.2 秒 CPU。
   Future<void> closeDatabase(WidgetTester tester) async {
     await tester.runAsync(db.close);
+  }
+
+  /// 等界面稳定。**有专注会话跑着的时候不能用 `pumpAndSettle`**：
+  /// 首页与专注页都会每秒重绘一次，帧永远排不空。这里手动推 400 毫秒，
+  /// 够动画跑完，又不到 1 秒，踩不响那个定时器。
+  Future<void> settle(WidgetTester tester) async {
+    for (int i = 0; i < 25; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
   }
 
   testWidgets('空库时给出空态文案，不是一片空白', (WidgetTester tester) async {
@@ -144,6 +155,54 @@ void main() {
 
     expect(find.text('写周报'), findsOneWidget);
     expect(find.text('买菜'), findsNothing);
+
+    await closeDatabase(tester);
+  });
+
+  testWidgets('首页可以进专注页', (WidgetTester tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.timer_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('开始专注'), findsOneWidget);
+
+    await closeDatabase(tester);
+  });
+
+  testWidgets('库里留着未结束的会话时，首页顶部给出恢复入口', (WidgetTester tester) async {
+    // 会话是存在库里的，所以「App 被划掉之后重开」在数据上就是这一条还挂着。
+    await tester.runAsync(() async {
+      await FocusSessionRepository(db).start(
+        at: DateTime.now().subtract(const Duration(minutes: 5)),
+        logicalDate: dayOnlyMillis(DateTime.now()),
+      );
+    });
+
+    await tester.pumpWidget(buildApp());
+    await settle(tester);
+
+    // 不说出来的话，用户会以为计时早就停了，而统计里会多出一段他没打算记的时间。
+    expect(find.textContaining('专注进行中'), findsOneWidget);
+    expect(find.text('返回'), findsOneWidget);
+
+    await tester.tap(find.text('返回'));
+    await settle(tester);
+
+    // 点进去就是那段会话本身，接着往下走。
+    expect(find.text('暂停'), findsOneWidget);
+    expect(find.text('已用这么久'), findsNothing); // 倒计时不是正计时
+
+    await closeDatabase(tester);
+  });
+
+  testWidgets('没有会话时不显示恢复条', (WidgetTester tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('返回'), findsNothing);
+    expect(find.textContaining('专注进行中'), findsNothing);
 
     await closeDatabase(tester);
   });

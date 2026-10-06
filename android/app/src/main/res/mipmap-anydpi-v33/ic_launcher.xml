@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13 起支持「主题图标」：用户开这一项后，系统拿走单色层，
+     按壁纸配色重新染色。这里必须与前景层**形状完全一致**，
+     否则同一个应用在两种模式下像是两个应用。
+
+     单独放在 anydpi-v33 而不是塞进 v26：`<monochrome>` 是 API 33 的元素，
+     老版本虽然会忽略它，但没必要让它们读一个看不懂的文件。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

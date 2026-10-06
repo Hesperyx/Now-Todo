@@ -3,9 +3,12 @@ import 'package:drift/drift.dart';
 import '../../core/models/entities.dart';
 import '../../core/models/enums.dart';
 import '../../core/models/task_query.dart';
+import '../../core/recurrence/recurrence.dart';
+import '../../core/recurrence/recurrence_rule.dart' as core;
 import '../../core/utils/ids.dart';
 import '../../core/utils/time.dart';
 import '../database/app_database.dart';
+import 'recurrence_repository.dart';
 
 /// 任务读写。
 ///
@@ -116,6 +119,9 @@ class TaskRepository {
   ///
   /// `title` 会去掉首尾空白；调用方应在此之前做非空校验
   /// （数据库也有 `min: 1` 的长度约束兜底）。
+  ///
+  /// [recurrenceRuleId] 由 `RecurrenceRepository` 先建好规则再传进来——
+  /// 任务只记一个 id，规则的字段一个都不重复。
   Future<String> create({
     required String title,
     String? note,
@@ -123,6 +129,7 @@ class TaskRepository {
     bool dueDateHasTime = false,
     TaskPriority priority = TaskPriority.none,
     String? listId,
+    String? recurrenceRuleId,
   }) async {
     final String id = newId();
     final int now = nowUtcMillis();
@@ -138,6 +145,7 @@ class TaskRepository {
             priority: Value(priority),
             status: const Value(TaskStatus.pending),
             listId: Value(listId),
+            recurrenceRuleId: Value(recurrenceRuleId),
             createdAt: now,
             updatedAt: now,
           ),
@@ -145,9 +153,9 @@ class TaskRepository {
     return id;
   }
 
-  /// 覆盖写一条任务的「编辑页字段」：标题、备注、截止时间、优先级、清单。
+  /// 覆盖写一条任务的「编辑页字段」：标题、备注、截止时间、优先级、清单、重复规则。
   ///
-  /// 全量写而不是局部写：调用方是编辑页，它手上本来就有这五个字段的完整值。
+  /// 全量写而不是局部写：调用方是编辑页，它手上本来就有这几个字段的完整值。
   /// 局部更新的签名需要 `Value<T>`/`Value.absent()` 来表达「不改」，
   /// 那会把 drift 的包装类型漏进界面层，违反 `docs/ARCHITECTURE.md` §3。
   ///
@@ -160,6 +168,7 @@ class TaskRepository {
     required bool dueDateHasTime,
     required TaskPriority priority,
     required String? listId,
+    required String? recurrenceRuleId,
   }) async {
     await (_db.update(_db.tasks)..where((t) => t.id.equals(id))).write(
       TasksCompanion(
@@ -169,21 +178,142 @@ class TaskRepository {
         dueDateHasTime: Value(dueDateHasTime),
         priority: Value(priority),
         listId: Value(listId),
+        recurrenceRuleId: Value(recurrenceRuleId),
         updatedAt: Value(nowUtcMillis()),
       ),
     );
   }
 
   /// 勾选 / 取消勾选。完成时记 [completedAt]，取消时清空它。
-  Future<void> setCompleted(String id, bool completed) async {
+  ///
+  /// 返回值是**这个系列新生成的那条任务的 id**，没有生成就是 `null`。
+  /// 首页拿它弹一句「下一条：2026-10-12」，用户才知道重复真的在跑。
+  ///
+  /// 重复任务的做法是**完成后另起一条新任务**，不是把同一条的截止日期往后
+  /// 推——后者会把「我昨天做过这件事」的记录抹掉（验收第 3 条：结束重复不该
+  /// 删掉历史已完成实例）。
+  ///
+  /// 整个动作在一个事务里：先确认「原来确实没完成」再生成，否则连点两下
+  /// 勾选框会生出两条。取消勾选不碰系列。
+  Future<String?> setCompleted(String id, bool completed) async {
     final int now = nowUtcMillis();
-    await (_db.update(_db.tasks)..where((t) => t.id.equals(id))).write(
-      TasksCompanion(
-        status: Value(completed ? TaskStatus.completed : TaskStatus.pending),
-        completedAt: Value(completed ? now : null),
-        updatedAt: Value(now),
-      ),
+
+    return _db.transaction<String?>(() async {
+      final TodoTask? before = await findById(id);
+      if (before == null) return null;
+
+      await (_db.update(_db.tasks)..where((t) => t.id.equals(id))).write(
+        TasksCompanion(
+          status: Value(completed ? TaskStatus.completed : TaskStatus.pending),
+          completedAt: Value(completed ? now : null),
+          updatedAt: Value(now),
+        ),
+      );
+
+      final String? ruleId = before.recurrenceRuleId;
+      // 只有「从未完成变成完成」才推系列；取消勾选、或者本来就是完成态
+      // （重复点击、界面重放）都不该生出下一条。
+      if (!completed || before.status == TaskStatus.completed) return null;
+      if (ruleId == null) return null;
+
+      return _spawnNext(before, ruleId, now: now);
+    });
+  }
+
+  /// 按重复规则算出下一条并落库，返回新任务 id。
+  ///
+  /// 规则行由这里自己查、自己解：仓储之间不互相调用是本项目的约定
+  /// （`decodeRule` 是公开的顶层函数，就是为了让这条查询不必再抄一遍）。
+  Future<String?> _spawnNext(
+    TodoTask finished,
+    String ruleId, {
+    required int now,
+  }) async {
+    final RecurrenceRule? row = await (_db.select(
+      _db.recurrenceRules,
+    )..where((r) => r.id.equals(ruleId))).getSingleOrNull();
+    // 规则没了（用户中途「结束重复」）就到此为止。剩下的实例各自独立。
+    if (row == null) return null;
+
+    final core.RecurrenceRule rule = decodeRule(row);
+    final int seriesCount = await _countSeries(ruleId);
+
+    final DateTime moment = fromUtcMillis(now);
+    // 只精确到日的任务，新的一条也不该带上时刻：拿「现在」当界会把
+    // 今天已经过掉的那次也判成逾期。
+    final DateTime notBefore = finished.dueDateHasTime
+        ? moment
+        : DateTime(moment.year, moment.month, moment.day);
+
+    // 只精确到日的实例要按「这一天结束了」来对齐节奏。拿当天零点去问
+    // 「下一个不晚于它的日期」，规则里的时刻（比如每天 09:30）会让答案落回
+    // 同一个日历日，于是每一次完成都生出同一天的下一条，系列原地踏步。
+    final DateTime instanceDate = finished.dueDate == null
+        ? rule.startsOn
+        : _alignmentPoint(
+            fromUtcMillis(finished.dueDate!),
+            hasTime: finished.dueDateHasTime,
+          );
+
+    final DateTime? next = nextAfterCompletion(
+      rule: rule,
+      instanceDate: instanceDate,
+      notBefore: notBefore,
+      seriesCount: seriesCount,
     );
+    if (next == null) return null;
+
+    final String newTaskId = newId();
+    await _db
+        .into(_db.tasks)
+        .insert(
+          TasksCompanion.insert(
+            id: newTaskId,
+            title: finished.title,
+            note: Value(finished.note),
+            dueDate: Value(
+              finished.dueDateHasTime ? next.utcMillis : dayOnlyMillis(next),
+            ),
+            dueDateHasTime: Value(finished.dueDateHasTime),
+            priority: Value(finished.priority),
+            status: const Value(TaskStatus.pending),
+            listId: Value(finished.listId),
+            recurrenceRuleId: Value(ruleId),
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+
+    // 标签跟着走：它描述的是「这是哪一类事」，而不是「这一次」。
+    // 子任务不跟：那是这一条自己的清单，上一轮勾掉的东西带过来只会碍事。
+    if (finished.tagNames.isNotEmpty) {
+      await setTaskTags(newTaskId, finished.tagNames);
+    }
+    return newTaskId;
+  }
+
+  /// 拿一条实例去对齐系列节奏时，用哪个时刻。
+  ///
+  /// 带时刻的实例就是它自己；只到日的实例取「这一天 23:59:59.999」——它代表的
+  /// 是整整一天，而不是零点那一瞬间。
+  static DateTime _alignmentPoint(DateTime due, {required bool hasTime}) {
+    if (hasTime) return due;
+    return DateTime(
+      due.year,
+      due.month,
+      due.day + 1,
+    ).subtract(const Duration(milliseconds: 1));
+  }
+
+  /// 这个系列现在有几条任务。**含刚完成的那条**——计数口径是「已经生成过
+  /// 几条」，不是「还剩几条」。删掉历史实例会让系列多跑一次，这是刻意的
+  /// 取舍，理由写在[表定义][RecurrenceRules.endCount]里。
+  Future<int> _countSeries(String ruleId) async {
+    final Expression<int> count = _db.tasks.id.count();
+    final query = _db.selectOnly(_db.tasks)
+      ..addColumns(<Expression<Object>>[count])
+      ..where(_db.tasks.recurrenceRuleId.equals(ruleId));
+    return (await query.getSingle()).read(count) ?? 0;
   }
 
   /// 硬删除。子任务、标签关联、提醒会由外键 `ON DELETE CASCADE` 带走。
@@ -285,6 +415,21 @@ class TaskRepository {
 
   Future<void> deleteSubtask(String subtaskId) async {
     await (_db.delete(_db.subtasks)..where((t) => t.id.equals(subtaskId))).go();
+  }
+
+  /// 按给定顺序重排子任务的 `sort_order`，下标就是新的顺序。
+  ///
+  /// 只动传进来的这些 id。界面上拖拽时传的是整个列表，漏掉一条的话它会保持
+  /// 原来的号数——比把它悄悄挪到末尾好，那种「我没碰它它却跑了」最难查。
+  Future<void> reorderSubtasks(List<String> orderedIds) async {
+    if (orderedIds.isEmpty) return;
+    await _db.transaction(() async {
+      for (int i = 0; i < orderedIds.length; i++) {
+        await (_db.update(_db.subtasks)
+              ..where((t) => t.id.equals(orderedIds[i])))
+            .write(SubtasksCompanion(sortOrder: Value(i)));
+      }
+    });
   }
 
   // ───────────────────────────── 标签 ─────────────────────────────

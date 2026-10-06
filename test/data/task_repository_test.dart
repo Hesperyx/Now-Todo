@@ -79,6 +79,7 @@ void main() {
         dueDateHasTime: false,
         priority: TaskPriority.low,
         listId: null,
+        recurrenceRuleId: null,
       );
 
       final TodoTask task = (await repo.findById(id))!;
@@ -221,6 +222,44 @@ void main() {
 
       expect(await repo.watchSubtasks(id).first, isEmpty);
     });
+
+    test('重排之后读回来的顺序就是传进去的顺序', () async {
+      final String id = await repo.create(title: '搬家');
+      final String packed = await repo.addSubtask(id, '打包');
+      final String car = await repo.addSubtask(id, '叫车');
+      final String key = await repo.addSubtask(id, '取钥匙');
+
+      await repo.reorderSubtasks(<String>[key, packed, car]);
+
+      final List<TodoSubtask> items = await repo.watchSubtasks(id).first;
+      expect(items.map((TodoSubtask s) => s.title), <String>[
+        '取钥匙',
+        '打包',
+        '叫车',
+      ]);
+      expect(items.map((TodoSubtask s) => s.sortOrder), <int>[0, 1, 2]);
+    });
+
+    test('往末尾追加的子任务还是排在最后', () async {
+      final String id = await repo.create(title: '搬家');
+      final String packed = await repo.addSubtask(id, '打包');
+      final String car = await repo.addSubtask(id, '叫车');
+
+      await repo.reorderSubtasks(<String>[car, packed]);
+      await repo.addSubtask(id, '锁门');
+
+      final List<TodoSubtask> items = await repo.watchSubtasks(id).first;
+      expect(items.map((TodoSubtask s) => s.title), <String>['叫车', '打包', '锁门']);
+    });
+
+    test('空列表什么都不做', () async {
+      final String id = await repo.create(title: '搬家');
+      await repo.addSubtask(id, '打包');
+
+      await repo.reorderSubtasks(const <String>[]);
+
+      expect(await repo.watchSubtasks(id).first, hasLength(1));
+    });
   });
 
   group('标签', () {
@@ -257,6 +296,25 @@ void main() {
       expect((await repo.findById(a))!.tagNames, <String>['工作']);
       expect((await repo.findById(b))!.tagNames, <String>['工作']);
     });
+
+    test('删掉任务会把标签关联一起带走，标签本身还在', () async {
+      final String id = await repo.create(title: '写周报');
+      await repo.setTaskTags(id, <String>['工作']);
+      expect(await db.select(db.taskTags).get(), hasLength(1));
+
+      await repo.delete(id);
+
+      expect(
+        await db.select(db.taskTags).get(),
+        isEmpty,
+        reason: 'task_tags.task_id 是 ON DELETE CASCADE',
+      );
+      expect(
+        await db.select(db.tags).get(),
+        hasLength(1),
+        reason: '标签是跨任务共用的，任务没了不该顺手把它删掉',
+      );
+    });
   });
 
   group('搜索', () {
@@ -271,6 +329,7 @@ void main() {
         dueDateHasTime: false,
         priority: TaskPriority.none,
         listId: null,
+        recurrenceRuleId: null,
       );
 
       expect(await titles(const TaskQuery(searchText: 'report')), <String>[
@@ -399,6 +458,7 @@ void main() {
       dueDateHasTime: false,
       priority: TaskPriority.none,
       listId: null,
+      recurrenceRuleId: null,
     );
     await pumpEventQueue();
     expect(seen.last?.title, '写月报');

@@ -70,6 +70,13 @@ class Tasks extends Table {
   /// 完成时刻。`status` 回到 pending 时会被清空。
   IntColumn get completedAt => integer().nullable()();
 
+  /// 预估要花几个番茄钟。
+  ///
+  /// **可空**，而且「没估过」与「估了 0 个」是两件事：前者不该在界面上
+  /// 显示进度条，后者是一个明确的「这个任务不用专注」。用 0 表示「没估过」
+  /// 会把这两个状态压成一个，之后再想分开就得做数据迁移。
+  IntColumn get estimatedPomodoros => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }

@@ -41,10 +41,43 @@ extension DefaultViewLabel on DefaultView {
   };
 }
 
+extension ReminderRepeatTypeLabel on ReminderRepeatType {
+  String get label => switch (this) {
+    ReminderRepeatType.once => '仅一次',
+    ReminderRepeatType.daily => '每天',
+    ReminderRepeatType.weekly => '每周',
+    ReminderRepeatType.monthly => '每月',
+  };
+}
+
 extension ThemeModeSettingLabel on ThemeModeSetting {
   String get label => switch (this) {
     ThemeModeSetting.system => '跟随系统',
     ThemeModeSetting.light => '浅色',
     ThemeModeSetting.dark => '深色',
+  };
+}
+
+extension FocusSessionKindLabel on FocusSessionKind {
+  String get label => switch (this) {
+    FocusSessionKind.focus => '专注',
+    FocusSessionKind.shortBreak => '短休息',
+    FocusSessionKind.longBreak => '长休息',
+  };
+}
+
+extension FocusTimerModeLabel on FocusTimerMode {
+  String get label => switch (this) {
+    FocusTimerMode.countUp => '正计时',
+    FocusTimerMode.countDown => '倒计时',
+  };
+}
+
+extension RecurrenceFrequencyLabel on RecurrenceFrequency {
+  String get label => switch (this) {
+    RecurrenceFrequency.daily => '每天',
+    RecurrenceFrequency.weekly => '每周',
+    RecurrenceFrequency.monthly => '每月',
+    RecurrenceFrequency.yearly => '每年',
   };
 }

@@ -15,4 +15,16 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- 小组件「最近七天」里的一根柱子。
+         宽度 0dp + weight 1 表示七根等分可用宽度；高度撑满由父容器给的那条
+         剩余空间，上下各留 2dp 让柱子不贴边。颜色不在这里——柱子按档位取色，
+         由 FocusWidgetProvider 逐根 setBackgroundColor（RemoteViews 没有
+         drawable 里的圆角与描边可用）。 -->
+    <style name="FocusWidgetBar">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:layout_marginBottom">2dp</item>
+    </style>
 </resources>

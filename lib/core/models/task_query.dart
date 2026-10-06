@@ -65,6 +65,30 @@ class TaskQuery {
     return trimmed.isEmpty ? null : trimmed;
   }
 
+  /// 除了顶层视图（今天 / 全部 / 已完成）之外，还额外限定了什么。
+  ///
+  /// 空列表有两种空法：「本来就没有任务」和「条件把它们藏起来了」，
+  /// 界面得能分清这两者——所以这个判断只有一份实现，放在这里。
+  /// 页面各自算一遍的话，早晚会有人漏掉新增的那个条件，
+  /// 于是空列表会理直气壮地说「这里很干净」。
+  bool get hasFilters =>
+      normalizedSearch != null ||
+      listId != null ||
+      tagName != null ||
+      overdueOnly ||
+      priorities.isNotEmpty;
+
+  /// 正在生效的筛选条件条数，用来给筛选入口挂一个小角标。
+  int get filterCount {
+    int count = 0;
+    if (normalizedSearch != null) count++;
+    if (listId != null) count++;
+    if (tagName != null) count++;
+    if (overdueOnly) count++;
+    if (priorities.isNotEmpty) count++;
+    return count;
+  }
+
   TaskQuery copyWith({
     bool? showCompleted,
     bool? dueTodayOnly,

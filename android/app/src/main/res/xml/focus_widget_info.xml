@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件的元信息。
+
+     updatePeriodMillis 是系统给的刷新节奏，最短 30 分钟——给更小的值会被
+     系统抬回这个下限，所以这里就写 1800000。要注意它要的不是「每秒更新」：
+     桌面上的数字来自应用推过来的快照，这次刷新只是让小组件在应用不在时也
+     保持可见，真正会变的是跨过零点之后的日期（那时要显示「还没更新今天的
+     记录」，而不是拿昨天的时长冒充今天）。
+
+     minWidth/minHeight 按 4×2 格给；targetCellWidth/targetCellHeight 与
+     previewLayout 是 Android 12+ 的字段，更老的系统会忽略它们。 -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/focus_widget_description"
+    android:initialLayout="@layout/focus_widget"
+    android:minHeight="110dp"
+    android:minWidth="180dp"
+    android:previewLayout="@layout/focus_widget"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="4"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen"
+    tools:targetApi="s" />

@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
+<!-- 启动时的窗口背景（Android 11 及以下由这里负责，Android 12+ 走 values-v31/styles.xml
+     的 windowSplashScreenBackground）。
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+     一屏品牌色 + 居中的环勾标志。不用默认的纯白：从图标点到应用之间会白闪一下，
+     在深色环境下尤其难看。标志用前景层 PNG——它的画布是 108dp、符号居中 60dp，
+     正好是可以直接摆在屏幕中间的大小，不用另做一张启动图。
+
+     底色的深浅由 `values/colors.xml` 与 `values-night/colors.xml` 两份同名颜色决定，
+     所以这一个文件同时服务浅色与深色。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@mipmap/ic_launcher_foreground" />
+    </item>
 </layer-list>

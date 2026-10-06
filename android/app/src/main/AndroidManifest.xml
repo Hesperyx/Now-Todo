@@ -1,6 +1,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 提醒功能要用的权限。核心功能（记任务）一条都不需要，
+         这里的每一条都只为「到点提醒」服务。
+
+         · POST_NOTIFICATIONS —— Android 13+ 的运行时通知权限，插件也声明了，
+           这里显式写一遍是为了让清单本身能自解释。
+         · RECEIVE_BOOT_COMPLETED —— 重启后重新排闹钟。不声明的话，
+           手机重启一次，之后所有提醒都不会再响，而且用户完全不会察觉。
+         · SCHEDULE_EXACT_ALARM —— Android 12+ 的精确闹钟。用户可以随时
+           在系统设置里收回，所以代码里每次排程前都重问一次，
+           拿不到就退化成非精确闹钟（晚几分钟，但一定会到）。
+           另一条路 USE_EXACT_ALARM 不需要用户授权，但应用商店审核会问用途，
+           这里不选。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- 专注计时进行中时的常驻通知要挂在前台服务上，否则从最近任务
+         划掉 App 之后它会被系统一起回收，计时看着还在、其实已经没了。
+
+         Android 14+ 要求前台服务声明具体类型，`specialUse` 是给
+         「不属于其他任何一类」的用途准备的——专注计时正是这种。
+         上架时需要在商店后台填写子类型说明（见 M5 交付物）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <application
-        android:label="now_todo"
+        android:label="Now Todo"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -30,6 +53,60 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- flutter_local_notifications 的两个广播接收器，见插件 README
+             的 "Gradle setup" 之后那一节。缺了它们不会编译报错，
+             只会让排好的通知在重启后静默消失——属于最难查的那类 bug。
+
+             exported=false：这些广播由系统发给本应用，不需要对外暴露。 -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+        <!-- flutter_local_notifications 的前台服务，承载专注计时的常驻通知。
+
+             stopWithTask="false" 是关键：划掉最近任务不算「用户想结束专注」。
+             这里声明的 foregroundServiceType 必须覆盖代码里传给
+             startForegroundService 的类型，否则 Android 14+ 会直接抛
+             SecurityException（见插件的 README 说明）。 -->
+        <service
+            android:name="com.dexterous.flutterlocalnotifications.ForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="专注计时进行中，用于在通知栏显示剩余时间"/>
+        </service>
+        <!-- 桌面小组件。
+
+             它自己不查库：只读应用推过来的一份快照（写入方是
+             HomeWidgetBridge）。系统按 focus_widget_info.xml 里声明的
+             updatePeriodMillis 定期叫它重画，应用推新快照时也会直接叫它，
+             所以应用被杀掉之后桌面上显示的仍是上次那份数据。
+
+             exported=false：APPWIDGET_UPDATE 由系统广播给本应用，
+             不需要对外暴露（桌面启动器是通过系统的 AppWidgetManager 拿到
+             这块小组件的，不走这条广播）。 -->
+        <receiver
+            android:name=".FocusWidgetProvider"
+            android:exported="false"
+            android:label="@string/focus_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/focus_widget_info"/>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

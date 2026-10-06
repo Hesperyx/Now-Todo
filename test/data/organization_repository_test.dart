@@ -147,5 +147,53 @@ void main() {
       expect(task.tagNames, isEmpty);
       expect(task.title, 'A');
     });
+
+    test('从标签管理页新建：是一个没有任何任务引用的标签', () async {
+      final String id = await tags.create('urgent', color: 0xFFB0475A);
+
+      final List<TodoTag> all = await tags.watch().first;
+      expect(all, hasLength(1));
+      expect(all.single.id, id);
+      expect(all.single.name, 'urgent');
+      expect(all.single.color, 0xFFB0475A);
+      expect(all.single.taskCount, 0);
+    });
+
+    test('新建时首尾空白会去掉', () async {
+      await tags.create('  work  ');
+
+      expect((await tags.watch().first).single.name, 'work');
+    });
+
+    test('新建一个已经存在的标签，复用已有的那条', () async {
+      final String first = await tags.create('work');
+      final String second = await tags.create('work');
+
+      expect(second, first);
+      expect(await tags.watch().first, hasLength(1));
+    });
+
+    test('大小写不同算两个标签，与唯一索引的语义一致', () async {
+      await tags.create('work');
+      await tags.create('Work');
+
+      // 排序用的是 `COLLATE NOCASE`，这两个名字在它眼里相等，
+      // 所以谁先谁后不确定，这里只比集合。
+      expect(
+        (await tags.watch().first).map((TodoTag tag) => tag.name).toSet(),
+        <String>{'work', 'Work'},
+      );
+    });
+
+    test('管理页建的标签，任务里直接写同名标签会用上同一条', () async {
+      final String created = await tags.create('work');
+      final String taskId = await tasks.create(title: 'A');
+      await tasks.setTaskTags(taskId, <String>['work']);
+
+      final List<TodoTag> all = await tags.watch().first;
+      expect(all, hasLength(1));
+      expect(all.single.id, created);
+      expect(all.single.taskCount, 1);
+    });
   });
 }

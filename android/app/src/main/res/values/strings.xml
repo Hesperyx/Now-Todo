@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 桌面小组件上的固定文案。
+
+         数字、时长、日期那些都是应用算好传来的（见 FocusWidgetProvider），
+         这里只放不随数据变化的部分。`focus_widget_empty_*` 同时用作布局里的
+         预览文字：还没推过任何快照时桌面上显示的就是它们。 -->
+    <string name="focus_widget_label">专注</string>
+    <string name="focus_widget_description">今天专注了多久，以及最近七天</string>
+    <string name="focus_widget_empty_headline">今天还没有专注</string>
+    <string name="focus_widget_empty_caption">打开应用开始计时</string>
+    <string name="focus_widget_stale_headline">还没更新今天的记录</string>
+    <string name="focus_widget_stale_caption">打开应用刷新</string>
+    <string name="focus_widget_week_label">最近七天</string>
+</resources>

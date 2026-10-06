@@ -1,0 +1,22 @@
+# 正式签名密钥的模板。复制成 `android/key.properties` 再填值：
+#
+#   Copy-Item android/key.properties.example android/key.properties
+#
+# 生成密钥（Windows PowerShell，keytool 随 JDK 一起来）：
+#
+#   keytool -genkeypair -v -keystore "$env:USERPROFILE\now-todo.jks" `
+#     -keyalg RSA -keysize 4096 -validity 10000 -alias now-todo
+#
+# 三条注意事项：
+# 1. `key.properties`、`*.jks`、`*.keystore` 都在 `android/.gitignore` 里 —— 别提交，
+#    也别放进任何会同步到云端的目录。
+# 2. 密钥文件丢了就发不出能覆盖已上架版本的更新：Google Play 只接受同一个签名的
+#    升级包。至少备份两处（离线介质 + 密码管理器附件）。
+# 3. `storeFile` 写绝对路径最省事；相对路径按 `android/app/` 解析。
+#
+# 没有这个文件时，`flutter build apk --release` 会退回 debug 签名照常构建，
+# 只是产物不能上架。
+storeFile=
+storePassword=
+keyAlias=now-todo
+keyPassword=

@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+<!-- 与 `drawable/launch_background.xml` 内容相同。
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+     Flutter 模板给了两份（`drawable/` 给 API 20 及以下，`drawable-v21/` 给 API 21+），
+     因为 21 之前 `windowBackground` 的层叠语义不同。这里两边写成一样：
+     启动页的画法没有随版本变化的必要，留两份只是照着模板别乱动。
+
+     内容和理由见 `drawable/launch_background.xml` 的注释。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@mipmap/ic_launcher_foreground" />
+    </item>
 </layer-list>

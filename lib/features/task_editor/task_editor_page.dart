@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../app/router.dart';
 import '../../core/models/entities.dart';
 import '../../core/models/enum_labels.dart';
 import '../../core/models/enums.dart';
+import '../../core/recurrence/recurrence_rule.dart';
+import '../../core/recurrence/recurrence_text.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/time.dart';
 import '../../data/repositories/task_repository.dart';
+import 'widgets/recurrence_sheet.dart';
 
 /// 任务编辑页。`taskId == null` 时是新建。
 ///
@@ -94,6 +100,23 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
   final List<String> _tags = <String>[];
   bool _busy = false;
 
+  /// 重复规则的草稿。`null` = 不重复。
+  ///
+  /// 规则不在 `TodoTask` 里（任务只记一个 `recurrenceRuleId`），所以它有
+  /// 自己的装载过程：改这条任务的规则要先把整条规则读出来。
+  RecurrenceRule? _recurrence;
+
+  /// 刚从库里读出来的规则，用来判断「重复设置被动过没有」。
+  ///
+  /// 不能拿 [_recurrence] 自己跟自己比——它是被弹窗改过的那个。
+  RecurrenceRule? _originalRule;
+
+  /// 规则读完了没有。没有规则要读时一开始就是 `true`。
+  ///
+  /// 保存按钮在它为 `false` 时是灰的：规则还没读回来就把表单存下去，
+  /// 会把用户已有的规则当成「草稿是 null」删掉。
+  bool _ruleReady = true;
+
   bool get _isNew => widget.task == null;
 
   @override
@@ -108,6 +131,29 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
     _priority = task.priority;
     _listId = task.listId;
     _tags.addAll(task.tagNames);
+    if (task.recurrenceRuleId != null) {
+      _ruleReady = false;
+      unawaited(_loadRecurrence(task.id));
+    }
+  }
+
+  Future<void> _loadRecurrence(String taskId) async {
+    try {
+      final RecurrenceRule? rule = await ref
+          .read(recurrenceRepositoryProvider)
+          .findForTask(taskId);
+      if (!mounted) return;
+      setState(() {
+        _recurrence = rule;
+        _originalRule = rule;
+        _ruleReady = true;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      // 读失败就继续当「不重复」处理太危险了——那会在保存时把规则删掉。
+      // 保持 `_ruleReady = false`，保存按钮继续灰着，用户看得见原因。
+      _report('没能读取重复规则：$error');
+    }
   }
 
   @override
@@ -162,10 +208,83 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
   }
 
   void _clearDueDate() {
+    final bool hadRule = _recurrence != null;
     setState(() {
       _dueDate = null;
       _dueDateHasTime = false;
+      // 重复是靠截止日期推算的：没有日期，「下一次」无从谈起。
+      // 与其留一条算不出下次的规则，不如一起清掉并说清楚。
+      _recurrence = null;
     });
+    if (hadRule) _report('去掉截止日期，重复也就一起取消了。');
+  }
+
+  // ──────────────────────────── 重复 ────────────────────────────
+
+  /// 打开重复设置弹窗。返回后把草稿写进状态。
+  Future<void> _editRecurrence() async {
+    if (_dueDate == null) {
+      // 先补一个日期，再进弹窗：弹窗里的预览要有东西可算。
+      // 用「今天」而不是「此刻」，日期化的任务不该凭空多出一个时刻。
+      setState(() {
+        _dueDate = dayOnlyMillis(DateTime.now());
+        _dueDateHasTime = false;
+      });
+      _report('重复的任务要有截止日期，已经设成今天。');
+    }
+
+    final RecurrenceRule? next = await showRecurrenceSheet(
+      context,
+      initial: _recurrence,
+      anchor: fromUtcMillis(_dueDate!).toLocal(),
+    );
+    if (next == null || !mounted) return;
+    setState(() => _recurrence = next);
+  }
+
+  /// 草稿规则：锚点永远跟着当前的截止日期走。
+  ///
+  /// 「此后全部」改的就是这个锚点；「仅此一次」会让仓储把旧锚点原样放回去
+  /// （[RecurrenceRepository.apply] 的 `keepSeriesAnchor`）。
+  RecurrenceRule _draftRule(RecurrenceRule draft) =>
+      draft.copyWith(startsOn: fromUtcMillis(_dueDate!).toLocal());
+
+  /// 两条规则的「设置」是否一致。
+  ///
+  /// 锚点不参与比较：草稿的锚点跟着截止日期走，用户没动重复设置时两者
+  /// 天然不同，拿它比会让每次保存都弹一次「仅此一次 / 此后全部」。
+  bool _sameRule(RecurrenceRule? a, RecurrenceRule? b) {
+    if (a == null || b == null) return a == b;
+    return a.copyWith(startsOn: b.startsOn) == b;
+  }
+
+  /// 改动要只落在这一条，还是让整个系列以后都按新的走。
+  ///
+  /// 返回 `null` = 用户取消（保存整个中止）。只有日期或重复设置被改动时
+  /// 才需要问——标题、备注、优先级本来就由下一条从这一条复制过去，
+  /// 不存在「只影响这一次」的歧义。
+  Future<bool?> _askScope() {
+    return showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('改动应用到哪？'),
+        content: const Text(
+          '这条任务属于一个重复系列。\n\n'
+          '「仅此一次」只改这一条的日期与设置，系列仍按原来的节奏往前走。\n'
+          '「此后全部」会把系列的时间基准挪到新的日期，后面的都跟着变。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('仅此一次'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('此后全部'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _addTag(String raw) {
@@ -187,6 +306,27 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
       _report('标题不能为空');
       return;
     }
+    if (!_ruleReady) {
+      // 兜一道：按钮这时是灰的，但键盘上的「完成」与自动提交绕得过按钮。
+      _report('重复规则还没读完，稍等一下再存。');
+      return;
+    }
+
+    // 改动只落这一条，还是让整个系列以后都跟着变。只有日期或重复设置
+    // 被动过才需要问，所以默认是「此后全部」（新建时唯一说得通的解释）。
+    bool seriesWide = true;
+    if (!_isNew) {
+      final bool touched =
+          _dueDate != widget.task!.dueDate ||
+          !_sameRule(_recurrence, _originalRule);
+      if (touched && (_recurrence != null || _originalRule != null)) {
+        final bool? answer = await _askScope();
+        // 用户取消 = 整个保存中止：他点的是「我再想想」，不是「按默认存」。
+        if (answer == null) return;
+        seriesWide = answer;
+        if (!mounted) return;
+      }
+    }
 
     setState(() => _busy = true);
     final TaskRepository repo = ref.read(taskRepositoryProvider);
@@ -195,6 +335,15 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
     try {
       final String id;
       if (_isNew) {
+        // 新建时先落规则再落任务：任务行要带上规则的 id。两条写入不在
+        // 一个事务里——规则没被引用就是一条孤儿行，比任务指向不存在的
+        // 规则安全得多。
+        final RecurrenceRule? draft = _recurrence;
+        final String? ruleId = draft == null
+            ? null
+            : await ref
+                  .read(recurrenceRepositoryProvider)
+                  .create(_draftRule(draft));
         id = await repo.create(
           title: title,
           note: note.isEmpty ? null : note,
@@ -202,9 +351,20 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
           dueDateHasTime: _dueDateHasTime,
           priority: _priority,
           listId: _listId,
+          recurrenceRuleId: ruleId,
         );
       } else {
         id = widget.task!.id;
+        final RecurrenceRule? draft = _recurrence;
+        // 「仅此一次」靠 keepSeriesAnchor 把锚点原样放回去：被挪过的这一条
+        // 会在下次推进时被 occurrenceOnOrBefore 吸回原来的节奏。
+        final String? ruleId = await ref
+            .read(recurrenceRepositoryProvider)
+            .apply(
+              taskId: id,
+              draft: draft == null ? null : _draftRule(draft),
+              keepSeriesAnchor: !seriesWide,
+            );
         await repo.update(
           id,
           title: title,
@@ -213,6 +373,7 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
           dueDateHasTime: _dueDateHasTime,
           priority: _priority,
           listId: _listId,
+          recurrenceRuleId: ruleId,
         );
       }
       // 标签单独写：它跨两张表，放进 create/update 会让那两个方法
@@ -283,6 +444,16 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
         actions: <Widget>[
           if (!_isNew)
             IconButton(
+              // 从这里进专注页会把 taskId 带过去，计时一开始就挂在这条任务上——
+              // 让用户先开计时再自己回头去找任务，是最容易忘的一步。
+              tooltip: '开始专注',
+              icon: const Icon(Icons.timer_outlined),
+              onPressed: _busy
+                  ? null
+                  : () => context.push(AppRoutes.focusFor(widget.task!.id)),
+            ),
+          if (!_isNew)
+            IconButton(
               tooltip: '删除',
               icon: const Icon(Icons.delete_outline),
               onPressed: _busy ? null : _confirmDelete,
@@ -346,6 +517,17 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
                       onPressed: _clearDueDate,
                     ),
                 ],
+              ),
+              const SizedBox(height: 24),
+
+              _SectionLabel(text: '重复'),
+              _RecurrenceBlock(
+                rule: _recurrence,
+                ready: _ruleReady,
+                onEdit: _busy ? null : _editRecurrence,
+                onClear: _busy
+                    ? null
+                    : () => setState(() => _recurrence = null),
               ),
               const SizedBox(height: 24),
 
@@ -415,6 +597,9 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
                 const SizedBox(height: 24),
                 _SectionLabel(text: '子任务'),
                 _SubtaskSection(taskId: widget.task!.id),
+                const SizedBox(height: 24),
+                _SectionLabel(text: '提醒'),
+                _ReminderSection(taskId: widget.task!.id),
               ] else ...<Widget>[
                 const SizedBox(height: 24),
                 Text(
@@ -448,7 +633,9 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
             child: SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _busy ? null : _save,
+                // 规则没读完时禁用：那时 `_recurrence` 还是 null，
+                // 存下去就等于把用户的重复规则删掉。
+                onPressed: (_busy || !_ruleReady) ? null : _save,
                 child: Text(_busy ? '保存中…' : '保存'),
               ),
             ),
@@ -457,6 +644,23 @@ class _TaskEditorFormState extends ConsumerState<_TaskEditorForm> {
       ),
     );
   }
+}
+
+/// 拖拽之后把新顺序写回库里。
+///
+/// `to` 是「插到哪个位置之前」的语义：往下拖时它已经把被拖走的那一项算进去了，
+/// 所以要先减一，否则最后一条永远拖不到末尾。
+Future<void> _reorderSubtasks(
+  WidgetRef ref,
+  int from,
+  int to,
+  List<TodoSubtask> items,
+) async {
+  final List<String> ids = <String>[
+    for (final TodoSubtask item in items) item.id,
+  ];
+  ids.insert(to > from ? to - 1 : to, ids.removeAt(from));
+  await ref.read(taskRepositoryProvider).reorderSubtasks(ids);
 }
 
 /// 子任务区块。
@@ -487,10 +691,17 @@ class _SubtaskSection extends ConsumerWidget {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 )
-              : Column(
+              : ReorderableListView(
+                  // 编辑器自己就是一个滚动视图，这里再套一个会抢走拖拽手势，
+                  // 所以列表只负责排布，滚动交给外面。
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  onReorder: (int from, int to) =>
+                      _reorderSubtasks(ref, from, to, items),
                   children: <Widget>[
                     for (final TodoSubtask item in items)
                       CheckboxListTile(
+                        key: ValueKey<String>(item.id),
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
@@ -574,6 +785,267 @@ class _SubtaskInputState extends ConsumerState<_SubtaskInput> {
         border: OutlineInputBorder(),
       ),
       onSubmitted: _submit,
+    );
+  }
+}
+
+/// 提醒区块。
+///
+/// 这里只负责往库里写。真正把提醒排进系统的是 `ReminderScheduler`——
+/// 它监听整张表，写完自动重算，界面不需要调任何「排一下提醒」的方法。
+/// 这条分界是刻意的：如果界面自己排通知，应用被强杀后重启就没人补排，
+/// 而「重启后提醒不再响」是用户完全察觉不到的那类故障。
+class _ReminderSection extends ConsumerWidget {
+  const _ReminderSection({required this.taskId});
+
+  final String taskId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ThemeData theme = Theme.of(context);
+    final AsyncValue<List<TodoReminder>> reminders = ref.watch(
+      remindersProvider(taskId),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        reminders.when(
+          skipLoadingOnRefresh: true,
+          data: (List<TodoReminder> items) => items.isEmpty
+              ? Text(
+                  '还没有提醒。',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                )
+              : Column(
+                  children: <Widget>[
+                    for (final TodoReminder item in items)
+                      _ReminderTile(reminder: item),
+                  ],
+                ),
+          loading: () => const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          ),
+          error: (Object error, StackTrace stack) => Text('读不到提醒：$error'),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: () => _add(context, ref),
+            icon: const Icon(Icons.add_alarm, size: 18),
+            label: const Text('添加提醒'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _add(BuildContext context, WidgetRef ref) async {
+    final DateTime now = DateTime.now();
+    final DateTime? picked = await _pickDateTime(
+      context,
+      initial: now.add(const Duration(hours: 1)),
+    );
+    if (!context.mounted || picked == null) return;
+
+    // 一次性提醒排在过去等于永远不响。这不是「稍后会响」，是静默失效，
+    // 所以必须当场拦住——让它进库，用户只会以为提醒功能坏了。
+    if (!picked.isAfter(now)) {
+      _showToast(context, '这个时间已经过去了，换一个吧。');
+      return;
+    }
+
+    try {
+      await ref
+          .read(reminderRepositoryProvider)
+          .add(taskId: taskId, remindAt: picked.utcMillis);
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      _showToast(context, '没能添加提醒：$error');
+    }
+  }
+}
+
+/// 单条提醒。
+class _ReminderTile extends ConsumerWidget {
+  const _ReminderTile({required this.reminder});
+
+  final TodoReminder reminder;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ThemeData theme = Theme.of(context);
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Switch(
+        value: reminder.enabled,
+        onChanged: (bool value) => ref
+            .read(reminderRepositoryProvider)
+            .update(reminder.id, enabled: value),
+      ),
+      title: Text(
+        formatDateTime(reminder.remindAt),
+        style: TextStyle(
+          color: reminder.enabled ? null : theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+      subtitle: Text(
+        reminder.repeatType.label,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          IconButton(
+            tooltip: '改重复方式',
+            icon: const Icon(Icons.repeat, size: 18),
+            onPressed: () => _pickRepeat(context, ref),
+          ),
+          IconButton(
+            tooltip: '删除提醒',
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: () =>
+                ref.read(reminderRepositoryProvider).delete(reminder.id),
+          ),
+        ],
+      ),
+      onTap: () => _pickTime(context, ref),
+    );
+  }
+
+  Future<void> _pickTime(BuildContext context, WidgetRef ref) async {
+    final DateTime? picked = await _pickDateTime(
+      context,
+      initial: fromUtcMillis(reminder.remindAt),
+    );
+    if (!context.mounted || picked == null) return;
+    await ref
+        .read(reminderRepositoryProvider)
+        .update(reminder.id, remindAt: picked.utcMillis);
+  }
+
+  Future<void> _pickRepeat(BuildContext context, WidgetRef ref) async {
+    final ReminderRepeatType? picked = await showDialog<ReminderRepeatType>(
+      context: context,
+      builder: (BuildContext dialogContext) => SimpleDialog(
+        title: const Text('重复方式'),
+        children: <Widget>[
+          for (final ReminderRepeatType value in ReminderRepeatType.values)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(dialogContext).pop(value),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    value == reminder.repeatType
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(value.label),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!context.mounted || picked == null) return;
+    await ref
+        .read(reminderRepositoryProvider)
+        .update(reminder.id, repeatType: picked);
+  }
+}
+
+/// 先选日期再选时间，两步都取消就返回 null。
+///
+/// `firstDate` 刻意取得很早：编辑一条已经过期的提醒时，
+/// `initialDate` 可能早于今天，而 `showDatePicker` 要求它落在区间内。
+Future<DateTime?> _pickDateTime(
+  BuildContext context, {
+  required DateTime initial,
+}) async {
+  final DateTime? date = await showDatePicker(
+    context: context,
+    initialDate: initial,
+    firstDate: DateTime(2000),
+    lastDate: DateTime(2100),
+    helpText: '选择提醒日期',
+  );
+  if (date == null || !context.mounted) return null;
+  final TimeOfDay? time = await showTimePicker(
+    context: context,
+    initialTime: TimeOfDay.fromDateTime(initial),
+    helpText: '选择提醒时间',
+  );
+  if (time == null) return null;
+  return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+}
+
+void _showToast(BuildContext context, String message) {
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(message)));
+}
+
+/// 「重复」那一块：没设置时是一个入口，设好之后是一行摘要加「下一次」。
+///
+/// 摘要用 [describeRecurrence] 而不是自己拼字符串——同一句话在别处（首页、
+/// 以后的通知文案）也要用，各拼一份早晚会对不上。
+class _RecurrenceBlock extends StatelessWidget {
+  const _RecurrenceBlock({
+    required this.rule,
+    required this.ready,
+    required this.onEdit,
+    required this.onClear,
+  });
+
+  final RecurrenceRule? rule;
+  final bool ready;
+  final VoidCallback? onEdit;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!ready) {
+      return const ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.repeat),
+        title: Text('正在读取重复设置…'),
+        subtitle: Text('读完之前不能保存，免得把已有的设置冲掉。'),
+      );
+    }
+
+    final RecurrenceRule? current = rule;
+    if (current == null) {
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.repeat),
+        title: const Text('不重复'),
+        subtitle: const Text('设置之后，完成这一条会自动生成下一条。'),
+        trailing: TextButton(onPressed: onEdit, child: const Text('设置重复')),
+        onTap: onEdit,
+      );
+    }
+
+    final String? next = nextOccurrenceText(current, now: DateTime.now());
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.repeat),
+      title: Text(describeRecurrence(current)),
+      subtitle: Text(next == null ? '按当前设置没有下一次了。' : '下一次：$next'),
+      trailing: IconButton(
+        tooltip: '取消重复',
+        icon: const Icon(Icons.close),
+        onPressed: onClear,
+      ),
+      onTap: onEdit,
     );
   }
 }

@@ -509,6 +509,18 @@ class $RecurrenceRulesTable extends RecurrenceRules
     requiredDuringInsert: false,
     defaultValue: const Constant(1),
   );
+  static const VerificationMeta _startsOnMeta = const VerificationMeta(
+    'startsOn',
+  );
+  @override
+  late final GeneratedColumn<int> startsOn = GeneratedColumn<int>(
+    'starts_on',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _byWeekdayMeta = const VerificationMeta(
     'byWeekday',
   );
@@ -542,6 +554,17 @@ class $RecurrenceRulesTable extends RecurrenceRules
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _endCountMeta = const VerificationMeta(
+    'endCount',
+  );
+  @override
+  late final GeneratedColumn<int> endCount = GeneratedColumn<int>(
+    'end_count',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -558,9 +581,11 @@ class $RecurrenceRulesTable extends RecurrenceRules
     id,
     frequency,
     interval,
+    startsOn,
     byWeekday,
     byMonthDay,
     endDate,
+    endCount,
     createdAt,
   ];
   @override
@@ -586,6 +611,12 @@ class $RecurrenceRulesTable extends RecurrenceRules
         interval.isAcceptableOrUnknown(data['interval']!, _intervalMeta),
       );
     }
+    if (data.containsKey('starts_on')) {
+      context.handle(
+        _startsOnMeta,
+        startsOn.isAcceptableOrUnknown(data['starts_on']!, _startsOnMeta),
+      );
+    }
     if (data.containsKey('by_weekday')) {
       context.handle(
         _byWeekdayMeta,
@@ -605,6 +636,12 @@ class $RecurrenceRulesTable extends RecurrenceRules
       context.handle(
         _endDateMeta,
         endDate.isAcceptableOrUnknown(data['end_date']!, _endDateMeta),
+      );
+    }
+    if (data.containsKey('end_count')) {
+      context.handle(
+        _endCountMeta,
+        endCount.isAcceptableOrUnknown(data['end_count']!, _endCountMeta),
       );
     }
     if (data.containsKey('created_at')) {
@@ -638,6 +675,10 @@ class $RecurrenceRulesTable extends RecurrenceRules
         DriftSqlType.int,
         data['${effectivePrefix}interval'],
       )!,
+      startsOn: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}starts_on'],
+      )!,
       byWeekday: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}by_weekday'],
@@ -649,6 +690,10 @@ class $RecurrenceRulesTable extends RecurrenceRules
       endDate: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}end_date'],
+      ),
+      endCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}end_count'],
       ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
@@ -671,8 +716,20 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
   final RecurrenceFrequency frequency;
 
   /// 间隔倍数。`frequency = weekly` 且 `interval = 2` 表示「每两周」。
-  /// 恒 `>= 1`，由应用层保证（数据库 CHECK 约束见迁移脚本）。
+  /// 恒 `>= 1`，由应用层保证（`RecurrenceRule.normalized()` 会在写入前收口）。
   final int interval;
+
+  /// 系列的锚点（本地零点，UTC 毫秒）：整个系列的日期都从它推算。
+  ///
+  /// 存锚点而不是「上一条实例的日期」是刻意的：某一条被单独挪到下周三，
+  /// 不该把「每周一」这个系列从此拖成周三。下一条的日期 = 锚点 +
+  /// `n × interval`，n 从锚点算起。
+  ///
+  /// **默认值 0 只是给 SQLite 用的**：给已有的表加一个非空列时它要求
+  /// 有默认值，否则整条 `ALTER TABLE` 会被拒。0 换算出来是 1970 年，
+  /// 一眼能看出是「没写过」，`RecurrenceRepository` 读到 0 时会退回用
+  /// 规则的创建时间兜底。
+  final int startsOn;
 
   /// 每周重复时生效：`1`=周一 … `7`=周日，逗号分隔，如 `"1,3,5"`。
   /// 为空表示「与起始日同一星期几」。
@@ -687,14 +744,23 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
   /// 不设默认上界：用户没说要停就一直重复。但 UI 上会提示「无限重复」，
   /// 免得用户以为设完就完事了。
   final int? endDate;
+
+  /// 最多生成几条（**含第 1 条**）。`null` = 不限次数。
+  ///
+  /// 计数口径是「这个系列现在有几条任务」，所以删掉一条历史实例会让系列
+  /// 少算一次、也就是多跑一次。这是刻意的取舍：与其维护一个会跟现实
+  /// 走散的计数器，不如每次当场数一遍。
+  final int? endCount;
   final int createdAt;
   const RecurrenceRule({
     required this.id,
     required this.frequency,
     required this.interval,
+    required this.startsOn,
     this.byWeekday,
     this.byMonthDay,
     this.endDate,
+    this.endCount,
     required this.createdAt,
   });
   @override
@@ -707,6 +773,7 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
       );
     }
     map['interval'] = Variable<int>(interval);
+    map['starts_on'] = Variable<int>(startsOn);
     if (!nullToAbsent || byWeekday != null) {
       map['by_weekday'] = Variable<String>(byWeekday);
     }
@@ -715,6 +782,9 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
     }
     if (!nullToAbsent || endDate != null) {
       map['end_date'] = Variable<int>(endDate);
+    }
+    if (!nullToAbsent || endCount != null) {
+      map['end_count'] = Variable<int>(endCount);
     }
     map['created_at'] = Variable<int>(createdAt);
     return map;
@@ -725,6 +795,7 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
       id: Value(id),
       frequency: Value(frequency),
       interval: Value(interval),
+      startsOn: Value(startsOn),
       byWeekday: byWeekday == null && nullToAbsent
           ? const Value.absent()
           : Value(byWeekday),
@@ -734,6 +805,9 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
       endDate: endDate == null && nullToAbsent
           ? const Value.absent()
           : Value(endDate),
+      endCount: endCount == null && nullToAbsent
+          ? const Value.absent()
+          : Value(endCount),
       createdAt: Value(createdAt),
     );
   }
@@ -749,9 +823,11 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
         serializer.fromJson<int>(json['frequency']),
       ),
       interval: serializer.fromJson<int>(json['interval']),
+      startsOn: serializer.fromJson<int>(json['startsOn']),
       byWeekday: serializer.fromJson<String?>(json['byWeekday']),
       byMonthDay: serializer.fromJson<String?>(json['byMonthDay']),
       endDate: serializer.fromJson<int?>(json['endDate']),
+      endCount: serializer.fromJson<int?>(json['endCount']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
     );
   }
@@ -764,9 +840,11 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
         $RecurrenceRulesTable.$converterfrequency.toJson(frequency),
       ),
       'interval': serializer.toJson<int>(interval),
+      'startsOn': serializer.toJson<int>(startsOn),
       'byWeekday': serializer.toJson<String?>(byWeekday),
       'byMonthDay': serializer.toJson<String?>(byMonthDay),
       'endDate': serializer.toJson<int?>(endDate),
+      'endCount': serializer.toJson<int?>(endCount),
       'createdAt': serializer.toJson<int>(createdAt),
     };
   }
@@ -775,17 +853,21 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
     String? id,
     RecurrenceFrequency? frequency,
     int? interval,
+    int? startsOn,
     Value<String?> byWeekday = const Value.absent(),
     Value<String?> byMonthDay = const Value.absent(),
     Value<int?> endDate = const Value.absent(),
+    Value<int?> endCount = const Value.absent(),
     int? createdAt,
   }) => RecurrenceRule(
     id: id ?? this.id,
     frequency: frequency ?? this.frequency,
     interval: interval ?? this.interval,
+    startsOn: startsOn ?? this.startsOn,
     byWeekday: byWeekday.present ? byWeekday.value : this.byWeekday,
     byMonthDay: byMonthDay.present ? byMonthDay.value : this.byMonthDay,
     endDate: endDate.present ? endDate.value : this.endDate,
+    endCount: endCount.present ? endCount.value : this.endCount,
     createdAt: createdAt ?? this.createdAt,
   );
   RecurrenceRule copyWithCompanion(RecurrenceRulesCompanion data) {
@@ -793,11 +875,13 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
       id: data.id.present ? data.id.value : this.id,
       frequency: data.frequency.present ? data.frequency.value : this.frequency,
       interval: data.interval.present ? data.interval.value : this.interval,
+      startsOn: data.startsOn.present ? data.startsOn.value : this.startsOn,
       byWeekday: data.byWeekday.present ? data.byWeekday.value : this.byWeekday,
       byMonthDay: data.byMonthDay.present
           ? data.byMonthDay.value
           : this.byMonthDay,
       endDate: data.endDate.present ? data.endDate.value : this.endDate,
+      endCount: data.endCount.present ? data.endCount.value : this.endCount,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
   }
@@ -808,9 +892,11 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
           ..write('id: $id, ')
           ..write('frequency: $frequency, ')
           ..write('interval: $interval, ')
+          ..write('startsOn: $startsOn, ')
           ..write('byWeekday: $byWeekday, ')
           ..write('byMonthDay: $byMonthDay, ')
           ..write('endDate: $endDate, ')
+          ..write('endCount: $endCount, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -821,9 +907,11 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
     id,
     frequency,
     interval,
+    startsOn,
     byWeekday,
     byMonthDay,
     endDate,
+    endCount,
     createdAt,
   );
   @override
@@ -833,9 +921,11 @@ class RecurrenceRule extends DataClass implements Insertable<RecurrenceRule> {
           other.id == this.id &&
           other.frequency == this.frequency &&
           other.interval == this.interval &&
+          other.startsOn == this.startsOn &&
           other.byWeekday == this.byWeekday &&
           other.byMonthDay == this.byMonthDay &&
           other.endDate == this.endDate &&
+          other.endCount == this.endCount &&
           other.createdAt == this.createdAt);
 }
 
@@ -843,18 +933,22 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
   final Value<String> id;
   final Value<RecurrenceFrequency> frequency;
   final Value<int> interval;
+  final Value<int> startsOn;
   final Value<String?> byWeekday;
   final Value<String?> byMonthDay;
   final Value<int?> endDate;
+  final Value<int?> endCount;
   final Value<int> createdAt;
   final Value<int> rowid;
   const RecurrenceRulesCompanion({
     this.id = const Value.absent(),
     this.frequency = const Value.absent(),
     this.interval = const Value.absent(),
+    this.startsOn = const Value.absent(),
     this.byWeekday = const Value.absent(),
     this.byMonthDay = const Value.absent(),
     this.endDate = const Value.absent(),
+    this.endCount = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -862,9 +956,11 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
     required String id,
     required RecurrenceFrequency frequency,
     this.interval = const Value.absent(),
+    this.startsOn = const Value.absent(),
     this.byWeekday = const Value.absent(),
     this.byMonthDay = const Value.absent(),
     this.endDate = const Value.absent(),
+    this.endCount = const Value.absent(),
     required int createdAt,
     this.rowid = const Value.absent(),
   }) : id = Value(id),
@@ -874,9 +970,11 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
     Expression<String>? id,
     Expression<int>? frequency,
     Expression<int>? interval,
+    Expression<int>? startsOn,
     Expression<String>? byWeekday,
     Expression<String>? byMonthDay,
     Expression<int>? endDate,
+    Expression<int>? endCount,
     Expression<int>? createdAt,
     Expression<int>? rowid,
   }) {
@@ -884,9 +982,11 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
       if (id != null) 'id': id,
       if (frequency != null) 'frequency': frequency,
       if (interval != null) 'interval': interval,
+      if (startsOn != null) 'starts_on': startsOn,
       if (byWeekday != null) 'by_weekday': byWeekday,
       if (byMonthDay != null) 'by_month_day': byMonthDay,
       if (endDate != null) 'end_date': endDate,
+      if (endCount != null) 'end_count': endCount,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -896,9 +996,11 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
     Value<String>? id,
     Value<RecurrenceFrequency>? frequency,
     Value<int>? interval,
+    Value<int>? startsOn,
     Value<String?>? byWeekday,
     Value<String?>? byMonthDay,
     Value<int?>? endDate,
+    Value<int?>? endCount,
     Value<int>? createdAt,
     Value<int>? rowid,
   }) {
@@ -906,9 +1008,11 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
       id: id ?? this.id,
       frequency: frequency ?? this.frequency,
       interval: interval ?? this.interval,
+      startsOn: startsOn ?? this.startsOn,
       byWeekday: byWeekday ?? this.byWeekday,
       byMonthDay: byMonthDay ?? this.byMonthDay,
       endDate: endDate ?? this.endDate,
+      endCount: endCount ?? this.endCount,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
     );
@@ -928,6 +1032,9 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
     if (interval.present) {
       map['interval'] = Variable<int>(interval.value);
     }
+    if (startsOn.present) {
+      map['starts_on'] = Variable<int>(startsOn.value);
+    }
     if (byWeekday.present) {
       map['by_weekday'] = Variable<String>(byWeekday.value);
     }
@@ -936,6 +1043,9 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
     }
     if (endDate.present) {
       map['end_date'] = Variable<int>(endDate.value);
+    }
+    if (endCount.present) {
+      map['end_count'] = Variable<int>(endCount.value);
     }
     if (createdAt.present) {
       map['created_at'] = Variable<int>(createdAt.value);
@@ -952,9 +1062,11 @@ class RecurrenceRulesCompanion extends UpdateCompanion<RecurrenceRule> {
           ..write('id: $id, ')
           ..write('frequency: $frequency, ')
           ..write('interval: $interval, ')
+          ..write('startsOn: $startsOn, ')
           ..write('byWeekday: $byWeekday, ')
           ..write('byMonthDay: $byMonthDay, ')
           ..write('endDate: $endDate, ')
+          ..write('endCount: $endCount, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -1103,6 +1215,16 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _estimatedPomodorosMeta =
+      const VerificationMeta('estimatedPomodoros');
+  @override
+  late final GeneratedColumn<int> estimatedPomodoros = GeneratedColumn<int>(
+    'estimated_pomodoros',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1117,6 +1239,7 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
     createdAt,
     updatedAt,
     completedAt,
+    estimatedPomodoros,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1204,6 +1327,15 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
         ),
       );
     }
+    if (data.containsKey('estimated_pomodoros')) {
+      context.handle(
+        _estimatedPomodorosMeta,
+        estimatedPomodoros.isAcceptableOrUnknown(
+          data['estimated_pomodoros']!,
+          _estimatedPomodorosMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1265,6 +1397,10 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
         DriftSqlType.int,
         data['${effectivePrefix}completed_at'],
       ),
+      estimatedPomodoros: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}estimated_pomodoros'],
+      ),
     );
   }
 
@@ -1312,6 +1448,13 @@ class Task extends DataClass implements Insertable<Task> {
 
   /// 完成时刻。`status` 回到 pending 时会被清空。
   final int? completedAt;
+
+  /// 预估要花几个番茄钟。
+  ///
+  /// **可空**，而且「没估过」与「估了 0 个」是两件事：前者不该在界面上
+  /// 显示进度条，后者是一个明确的「这个任务不用专注」。用 0 表示「没估过」
+  /// 会把这两个状态压成一个，之后再想分开就得做数据迁移。
+  final int? estimatedPomodoros;
   const Task({
     required this.id,
     required this.title,
@@ -1325,6 +1468,7 @@ class Task extends DataClass implements Insertable<Task> {
     required this.createdAt,
     required this.updatedAt,
     this.completedAt,
+    this.estimatedPomodoros,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1357,6 +1501,9 @@ class Task extends DataClass implements Insertable<Task> {
     if (!nullToAbsent || completedAt != null) {
       map['completed_at'] = Variable<int>(completedAt);
     }
+    if (!nullToAbsent || estimatedPomodoros != null) {
+      map['estimated_pomodoros'] = Variable<int>(estimatedPomodoros);
+    }
     return map;
   }
 
@@ -1382,6 +1529,9 @@ class Task extends DataClass implements Insertable<Task> {
       completedAt: completedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(completedAt),
+      estimatedPomodoros: estimatedPomodoros == null && nullToAbsent
+          ? const Value.absent()
+          : Value(estimatedPomodoros),
     );
   }
 
@@ -1407,6 +1557,7 @@ class Task extends DataClass implements Insertable<Task> {
       createdAt: serializer.fromJson<int>(json['createdAt']),
       updatedAt: serializer.fromJson<int>(json['updatedAt']),
       completedAt: serializer.fromJson<int?>(json['completedAt']),
+      estimatedPomodoros: serializer.fromJson<int?>(json['estimatedPomodoros']),
     );
   }
   @override
@@ -1429,6 +1580,7 @@ class Task extends DataClass implements Insertable<Task> {
       'createdAt': serializer.toJson<int>(createdAt),
       'updatedAt': serializer.toJson<int>(updatedAt),
       'completedAt': serializer.toJson<int?>(completedAt),
+      'estimatedPomodoros': serializer.toJson<int?>(estimatedPomodoros),
     };
   }
 
@@ -1445,6 +1597,7 @@ class Task extends DataClass implements Insertable<Task> {
     int? createdAt,
     int? updatedAt,
     Value<int?> completedAt = const Value.absent(),
+    Value<int?> estimatedPomodoros = const Value.absent(),
   }) => Task(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -1460,6 +1613,9 @@ class Task extends DataClass implements Insertable<Task> {
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     completedAt: completedAt.present ? completedAt.value : this.completedAt,
+    estimatedPomodoros: estimatedPomodoros.present
+        ? estimatedPomodoros.value
+        : this.estimatedPomodoros,
   );
   Task copyWithCompanion(TasksCompanion data) {
     return Task(
@@ -1481,6 +1637,9 @@ class Task extends DataClass implements Insertable<Task> {
       completedAt: data.completedAt.present
           ? data.completedAt.value
           : this.completedAt,
+      estimatedPomodoros: data.estimatedPomodoros.present
+          ? data.estimatedPomodoros.value
+          : this.estimatedPomodoros,
     );
   }
 
@@ -1498,7 +1657,8 @@ class Task extends DataClass implements Insertable<Task> {
           ..write('recurrenceRuleId: $recurrenceRuleId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('completedAt: $completedAt')
+          ..write('completedAt: $completedAt, ')
+          ..write('estimatedPomodoros: $estimatedPomodoros')
           ..write(')'))
         .toString();
   }
@@ -1517,6 +1677,7 @@ class Task extends DataClass implements Insertable<Task> {
     createdAt,
     updatedAt,
     completedAt,
+    estimatedPomodoros,
   );
   @override
   bool operator ==(Object other) =>
@@ -1533,7 +1694,8 @@ class Task extends DataClass implements Insertable<Task> {
           other.recurrenceRuleId == this.recurrenceRuleId &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
-          other.completedAt == this.completedAt);
+          other.completedAt == this.completedAt &&
+          other.estimatedPomodoros == this.estimatedPomodoros);
 }
 
 class TasksCompanion extends UpdateCompanion<Task> {
@@ -1549,6 +1711,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
   final Value<int> createdAt;
   final Value<int> updatedAt;
   final Value<int?> completedAt;
+  final Value<int?> estimatedPomodoros;
   final Value<int> rowid;
   const TasksCompanion({
     this.id = const Value.absent(),
@@ -1563,6 +1726,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.completedAt = const Value.absent(),
+    this.estimatedPomodoros = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TasksCompanion.insert({
@@ -1578,6 +1742,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
     required int createdAt,
     required int updatedAt,
     this.completedAt = const Value.absent(),
+    this.estimatedPomodoros = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        title = Value(title),
@@ -1596,6 +1761,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
     Expression<int>? createdAt,
     Expression<int>? updatedAt,
     Expression<int>? completedAt,
+    Expression<int>? estimatedPomodoros,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1611,6 +1777,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (completedAt != null) 'completed_at': completedAt,
+      if (estimatedPomodoros != null) 'estimated_pomodoros': estimatedPomodoros,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1628,6 +1795,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
     Value<int>? createdAt,
     Value<int>? updatedAt,
     Value<int?>? completedAt,
+    Value<int?>? estimatedPomodoros,
     Value<int>? rowid,
   }) {
     return TasksCompanion(
@@ -1643,6 +1811,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       completedAt: completedAt ?? this.completedAt,
+      estimatedPomodoros: estimatedPomodoros ?? this.estimatedPomodoros,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1690,6 +1859,9 @@ class TasksCompanion extends UpdateCompanion<Task> {
     if (completedAt.present) {
       map['completed_at'] = Variable<int>(completedAt.value);
     }
+    if (estimatedPomodoros.present) {
+      map['estimated_pomodoros'] = Variable<int>(estimatedPomodoros.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1711,6 +1883,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('completedAt: $completedAt, ')
+          ..write('estimatedPomodoros: $estimatedPomodoros, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3132,6 +3305,120 @@ class $AppSettingsTable extends AppSettings
     ),
     defaultValue: const Constant(true),
   );
+  static const VerificationMeta _strongRemindersMeta = const VerificationMeta(
+    'strongReminders',
+  );
+  @override
+  late final GeneratedColumn<bool> strongReminders = GeneratedColumn<bool>(
+    'strong_reminders',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("strong_reminders" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _focusMinutesMeta = const VerificationMeta(
+    'focusMinutes',
+  );
+  @override
+  late final GeneratedColumn<int> focusMinutes = GeneratedColumn<int>(
+    'focus_minutes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(25),
+  );
+  static const VerificationMeta _shortBreakMinutesMeta = const VerificationMeta(
+    'shortBreakMinutes',
+  );
+  @override
+  late final GeneratedColumn<int> shortBreakMinutes = GeneratedColumn<int>(
+    'short_break_minutes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(5),
+  );
+  static const VerificationMeta _longBreakMinutesMeta = const VerificationMeta(
+    'longBreakMinutes',
+  );
+  @override
+  late final GeneratedColumn<int> longBreakMinutes = GeneratedColumn<int>(
+    'long_break_minutes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(15),
+  );
+  static const VerificationMeta _roundsBeforeLongBreakMeta =
+      const VerificationMeta('roundsBeforeLongBreak');
+  @override
+  late final GeneratedColumn<int> roundsBeforeLongBreak = GeneratedColumn<int>(
+    'rounds_before_long_break',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(4),
+  );
+  static const VerificationMeta _autoStartNextMeta = const VerificationMeta(
+    'autoStartNext',
+  );
+  @override
+  late final GeneratedColumn<bool> autoStartNext = GeneratedColumn<bool>(
+    'auto_start_next',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("auto_start_next" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<FocusTimerMode, int>
+  defaultTimerMode = GeneratedColumn<int>(
+    'default_timer_mode',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  ).withConverter<FocusTimerMode>($AppSettingsTable.$converterdefaultTimerMode);
+  static const VerificationMeta _midnightModeMeta = const VerificationMeta(
+    'midnightMode',
+  );
+  @override
+  late final GeneratedColumn<bool> midnightMode = GeneratedColumn<bool>(
+    'midnight_mode',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("midnight_mode" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _midnightEndHourMeta = const VerificationMeta(
+    'midnightEndHour',
+  );
+  @override
+  late final GeneratedColumn<int> midnightEndHour = GeneratedColumn<int>(
+    'midnight_end_hour',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(4),
+  );
   static const VerificationMeta _initializedAtMeta = const VerificationMeta(
     'initializedAt',
   );
@@ -3160,6 +3447,15 @@ class $AppSettingsTable extends AppSettings
     themeMode,
     defaultView,
     notificationsEnabled,
+    strongReminders,
+    focusMinutes,
+    shortBreakMinutes,
+    longBreakMinutes,
+    roundsBeforeLongBreak,
+    autoStartNext,
+    defaultTimerMode,
+    midnightMode,
+    midnightEndHour,
     initializedAt,
     updatedAt,
   ];
@@ -3184,6 +3480,78 @@ class $AppSettingsTable extends AppSettings
         notificationsEnabled.isAcceptableOrUnknown(
           data['notifications_enabled']!,
           _notificationsEnabledMeta,
+        ),
+      );
+    }
+    if (data.containsKey('strong_reminders')) {
+      context.handle(
+        _strongRemindersMeta,
+        strongReminders.isAcceptableOrUnknown(
+          data['strong_reminders']!,
+          _strongRemindersMeta,
+        ),
+      );
+    }
+    if (data.containsKey('focus_minutes')) {
+      context.handle(
+        _focusMinutesMeta,
+        focusMinutes.isAcceptableOrUnknown(
+          data['focus_minutes']!,
+          _focusMinutesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('short_break_minutes')) {
+      context.handle(
+        _shortBreakMinutesMeta,
+        shortBreakMinutes.isAcceptableOrUnknown(
+          data['short_break_minutes']!,
+          _shortBreakMinutesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('long_break_minutes')) {
+      context.handle(
+        _longBreakMinutesMeta,
+        longBreakMinutes.isAcceptableOrUnknown(
+          data['long_break_minutes']!,
+          _longBreakMinutesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('rounds_before_long_break')) {
+      context.handle(
+        _roundsBeforeLongBreakMeta,
+        roundsBeforeLongBreak.isAcceptableOrUnknown(
+          data['rounds_before_long_break']!,
+          _roundsBeforeLongBreakMeta,
+        ),
+      );
+    }
+    if (data.containsKey('auto_start_next')) {
+      context.handle(
+        _autoStartNextMeta,
+        autoStartNext.isAcceptableOrUnknown(
+          data['auto_start_next']!,
+          _autoStartNextMeta,
+        ),
+      );
+    }
+    if (data.containsKey('midnight_mode')) {
+      context.handle(
+        _midnightModeMeta,
+        midnightMode.isAcceptableOrUnknown(
+          data['midnight_mode']!,
+          _midnightModeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('midnight_end_hour')) {
+      context.handle(
+        _midnightEndHourMeta,
+        midnightEndHour.isAcceptableOrUnknown(
+          data['midnight_end_hour']!,
+          _midnightEndHourMeta,
         ),
       );
     }
@@ -3231,6 +3599,44 @@ class $AppSettingsTable extends AppSettings
         DriftSqlType.bool,
         data['${effectivePrefix}notifications_enabled'],
       )!,
+      strongReminders: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}strong_reminders'],
+      )!,
+      focusMinutes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}focus_minutes'],
+      )!,
+      shortBreakMinutes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}short_break_minutes'],
+      )!,
+      longBreakMinutes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}long_break_minutes'],
+      )!,
+      roundsBeforeLongBreak: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}rounds_before_long_break'],
+      )!,
+      autoStartNext: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}auto_start_next'],
+      )!,
+      defaultTimerMode: $AppSettingsTable.$converterdefaultTimerMode.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}default_timer_mode'],
+        )!,
+      ),
+      midnightMode: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}midnight_mode'],
+      )!,
+      midnightEndHour: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}midnight_end_hour'],
+      )!,
       initializedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}initialized_at'],
@@ -3251,6 +3657,10 @@ class $AppSettingsTable extends AppSettings
       const EnumIndexConverter<ThemeModeSetting>(ThemeModeSetting.values);
   static JsonTypeConverter2<DefaultView, int, int> $converterdefaultView =
       const EnumIndexConverter<DefaultView>(DefaultView.values);
+  static JsonTypeConverter2<FocusTimerMode, int, int>
+  $converterdefaultTimerMode = const EnumIndexConverter<FocusTimerMode>(
+    FocusTimerMode.values,
+  );
 }
 
 class AppSetting extends DataClass implements Insertable<AppSetting> {
@@ -3264,6 +3674,43 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   /// 与「提醒本身被禁用」是两件事：前者是全局态度，后者是单条配置。
   final bool notificationsEnabled;
 
+  /// 强提醒：到点后持续响铃，直到用户处理掉这条通知。
+  ///
+  /// 默认**关**。它会一直响，默认开启对一个待办应用来说太吵了；
+  /// 而且系统勿扰与静音会压制它，用户以为「开了就一定能叫醒」时
+  /// 反而更容易误事，所以必须是用户主动选的。
+  final bool strongReminders;
+
+  /// 一轮专注的分钟数。
+  final int focusMinutes;
+
+  /// 短休息的分钟数。
+  final int shortBreakMinutes;
+
+  /// 长休息的分钟数。
+  final int longBreakMinutes;
+
+  /// 几轮专注之后接一次长休息。
+  final int roundsBeforeLongBreak;
+
+  /// 一轮结束后是否自动开始下一轮。
+  ///
+  /// 默认**关**：自动接续意味着用户离开工位后计时器还在自己往下跑，
+  /// 记下来的「专注」会变成一段没人专注的时间。
+  final bool autoStartNext;
+
+  /// 默认的计时模式。`1` = `FocusTimerMode.countDown`（枚举是追加式的，
+  /// 倒计时不是第 0 个，所以这里只能写裸值）。
+  final FocusTimerMode defaultTimerMode;
+
+  /// 午夜模式：凌晨开始的会话算作前一天。
+  ///
+  /// 默认**关**。对作息正常的人是纯粹的噪音，对熬夜的人才是刚需。
+  final bool midnightMode;
+
+  /// 午夜模式的边界小时：本地时刻小于它的算前一天。默认 4 点。
+  final int midnightEndHour;
+
   /// 首次启动完成时间。`null` 表示还没走过初始化。
   ///
   /// 用它判断要不要建内置清单、要不要显示欢迎引导——
@@ -3275,6 +3722,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     required this.themeMode,
     required this.defaultView,
     required this.notificationsEnabled,
+    required this.strongReminders,
+    required this.focusMinutes,
+    required this.shortBreakMinutes,
+    required this.longBreakMinutes,
+    required this.roundsBeforeLongBreak,
+    required this.autoStartNext,
+    required this.defaultTimerMode,
+    required this.midnightMode,
+    required this.midnightEndHour,
     this.initializedAt,
     this.updatedAt,
   });
@@ -3293,6 +3749,19 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       );
     }
     map['notifications_enabled'] = Variable<bool>(notificationsEnabled);
+    map['strong_reminders'] = Variable<bool>(strongReminders);
+    map['focus_minutes'] = Variable<int>(focusMinutes);
+    map['short_break_minutes'] = Variable<int>(shortBreakMinutes);
+    map['long_break_minutes'] = Variable<int>(longBreakMinutes);
+    map['rounds_before_long_break'] = Variable<int>(roundsBeforeLongBreak);
+    map['auto_start_next'] = Variable<bool>(autoStartNext);
+    {
+      map['default_timer_mode'] = Variable<int>(
+        $AppSettingsTable.$converterdefaultTimerMode.toSql(defaultTimerMode),
+      );
+    }
+    map['midnight_mode'] = Variable<bool>(midnightMode);
+    map['midnight_end_hour'] = Variable<int>(midnightEndHour);
     if (!nullToAbsent || initializedAt != null) {
       map['initialized_at'] = Variable<int>(initializedAt);
     }
@@ -3308,6 +3777,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       themeMode: Value(themeMode),
       defaultView: Value(defaultView),
       notificationsEnabled: Value(notificationsEnabled),
+      strongReminders: Value(strongReminders),
+      focusMinutes: Value(focusMinutes),
+      shortBreakMinutes: Value(shortBreakMinutes),
+      longBreakMinutes: Value(longBreakMinutes),
+      roundsBeforeLongBreak: Value(roundsBeforeLongBreak),
+      autoStartNext: Value(autoStartNext),
+      defaultTimerMode: Value(defaultTimerMode),
+      midnightMode: Value(midnightMode),
+      midnightEndHour: Value(midnightEndHour),
       initializedAt: initializedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(initializedAt),
@@ -3333,6 +3811,19 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       notificationsEnabled: serializer.fromJson<bool>(
         json['notificationsEnabled'],
       ),
+      strongReminders: serializer.fromJson<bool>(json['strongReminders']),
+      focusMinutes: serializer.fromJson<int>(json['focusMinutes']),
+      shortBreakMinutes: serializer.fromJson<int>(json['shortBreakMinutes']),
+      longBreakMinutes: serializer.fromJson<int>(json['longBreakMinutes']),
+      roundsBeforeLongBreak: serializer.fromJson<int>(
+        json['roundsBeforeLongBreak'],
+      ),
+      autoStartNext: serializer.fromJson<bool>(json['autoStartNext']),
+      defaultTimerMode: $AppSettingsTable.$converterdefaultTimerMode.fromJson(
+        serializer.fromJson<int>(json['defaultTimerMode']),
+      ),
+      midnightMode: serializer.fromJson<bool>(json['midnightMode']),
+      midnightEndHour: serializer.fromJson<int>(json['midnightEndHour']),
       initializedAt: serializer.fromJson<int?>(json['initializedAt']),
       updatedAt: serializer.fromJson<int?>(json['updatedAt']),
     );
@@ -3349,6 +3840,17 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
         $AppSettingsTable.$converterdefaultView.toJson(defaultView),
       ),
       'notificationsEnabled': serializer.toJson<bool>(notificationsEnabled),
+      'strongReminders': serializer.toJson<bool>(strongReminders),
+      'focusMinutes': serializer.toJson<int>(focusMinutes),
+      'shortBreakMinutes': serializer.toJson<int>(shortBreakMinutes),
+      'longBreakMinutes': serializer.toJson<int>(longBreakMinutes),
+      'roundsBeforeLongBreak': serializer.toJson<int>(roundsBeforeLongBreak),
+      'autoStartNext': serializer.toJson<bool>(autoStartNext),
+      'defaultTimerMode': serializer.toJson<int>(
+        $AppSettingsTable.$converterdefaultTimerMode.toJson(defaultTimerMode),
+      ),
+      'midnightMode': serializer.toJson<bool>(midnightMode),
+      'midnightEndHour': serializer.toJson<int>(midnightEndHour),
       'initializedAt': serializer.toJson<int?>(initializedAt),
       'updatedAt': serializer.toJson<int?>(updatedAt),
     };
@@ -3359,6 +3861,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     ThemeModeSetting? themeMode,
     DefaultView? defaultView,
     bool? notificationsEnabled,
+    bool? strongReminders,
+    int? focusMinutes,
+    int? shortBreakMinutes,
+    int? longBreakMinutes,
+    int? roundsBeforeLongBreak,
+    bool? autoStartNext,
+    FocusTimerMode? defaultTimerMode,
+    bool? midnightMode,
+    int? midnightEndHour,
     Value<int?> initializedAt = const Value.absent(),
     Value<int?> updatedAt = const Value.absent(),
   }) => AppSetting(
@@ -3366,6 +3877,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     themeMode: themeMode ?? this.themeMode,
     defaultView: defaultView ?? this.defaultView,
     notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+    strongReminders: strongReminders ?? this.strongReminders,
+    focusMinutes: focusMinutes ?? this.focusMinutes,
+    shortBreakMinutes: shortBreakMinutes ?? this.shortBreakMinutes,
+    longBreakMinutes: longBreakMinutes ?? this.longBreakMinutes,
+    roundsBeforeLongBreak: roundsBeforeLongBreak ?? this.roundsBeforeLongBreak,
+    autoStartNext: autoStartNext ?? this.autoStartNext,
+    defaultTimerMode: defaultTimerMode ?? this.defaultTimerMode,
+    midnightMode: midnightMode ?? this.midnightMode,
+    midnightEndHour: midnightEndHour ?? this.midnightEndHour,
     initializedAt: initializedAt.present
         ? initializedAt.value
         : this.initializedAt,
@@ -3381,6 +3901,33 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       notificationsEnabled: data.notificationsEnabled.present
           ? data.notificationsEnabled.value
           : this.notificationsEnabled,
+      strongReminders: data.strongReminders.present
+          ? data.strongReminders.value
+          : this.strongReminders,
+      focusMinutes: data.focusMinutes.present
+          ? data.focusMinutes.value
+          : this.focusMinutes,
+      shortBreakMinutes: data.shortBreakMinutes.present
+          ? data.shortBreakMinutes.value
+          : this.shortBreakMinutes,
+      longBreakMinutes: data.longBreakMinutes.present
+          ? data.longBreakMinutes.value
+          : this.longBreakMinutes,
+      roundsBeforeLongBreak: data.roundsBeforeLongBreak.present
+          ? data.roundsBeforeLongBreak.value
+          : this.roundsBeforeLongBreak,
+      autoStartNext: data.autoStartNext.present
+          ? data.autoStartNext.value
+          : this.autoStartNext,
+      defaultTimerMode: data.defaultTimerMode.present
+          ? data.defaultTimerMode.value
+          : this.defaultTimerMode,
+      midnightMode: data.midnightMode.present
+          ? data.midnightMode.value
+          : this.midnightMode,
+      midnightEndHour: data.midnightEndHour.present
+          ? data.midnightEndHour.value
+          : this.midnightEndHour,
       initializedAt: data.initializedAt.present
           ? data.initializedAt.value
           : this.initializedAt,
@@ -3395,6 +3942,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ..write('themeMode: $themeMode, ')
           ..write('defaultView: $defaultView, ')
           ..write('notificationsEnabled: $notificationsEnabled, ')
+          ..write('strongReminders: $strongReminders, ')
+          ..write('focusMinutes: $focusMinutes, ')
+          ..write('shortBreakMinutes: $shortBreakMinutes, ')
+          ..write('longBreakMinutes: $longBreakMinutes, ')
+          ..write('roundsBeforeLongBreak: $roundsBeforeLongBreak, ')
+          ..write('autoStartNext: $autoStartNext, ')
+          ..write('defaultTimerMode: $defaultTimerMode, ')
+          ..write('midnightMode: $midnightMode, ')
+          ..write('midnightEndHour: $midnightEndHour, ')
           ..write('initializedAt: $initializedAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -3407,6 +3963,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     themeMode,
     defaultView,
     notificationsEnabled,
+    strongReminders,
+    focusMinutes,
+    shortBreakMinutes,
+    longBreakMinutes,
+    roundsBeforeLongBreak,
+    autoStartNext,
+    defaultTimerMode,
+    midnightMode,
+    midnightEndHour,
     initializedAt,
     updatedAt,
   );
@@ -3418,6 +3983,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           other.themeMode == this.themeMode &&
           other.defaultView == this.defaultView &&
           other.notificationsEnabled == this.notificationsEnabled &&
+          other.strongReminders == this.strongReminders &&
+          other.focusMinutes == this.focusMinutes &&
+          other.shortBreakMinutes == this.shortBreakMinutes &&
+          other.longBreakMinutes == this.longBreakMinutes &&
+          other.roundsBeforeLongBreak == this.roundsBeforeLongBreak &&
+          other.autoStartNext == this.autoStartNext &&
+          other.defaultTimerMode == this.defaultTimerMode &&
+          other.midnightMode == this.midnightMode &&
+          other.midnightEndHour == this.midnightEndHour &&
           other.initializedAt == this.initializedAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -3427,6 +4001,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   final Value<ThemeModeSetting> themeMode;
   final Value<DefaultView> defaultView;
   final Value<bool> notificationsEnabled;
+  final Value<bool> strongReminders;
+  final Value<int> focusMinutes;
+  final Value<int> shortBreakMinutes;
+  final Value<int> longBreakMinutes;
+  final Value<int> roundsBeforeLongBreak;
+  final Value<bool> autoStartNext;
+  final Value<FocusTimerMode> defaultTimerMode;
+  final Value<bool> midnightMode;
+  final Value<int> midnightEndHour;
   final Value<int?> initializedAt;
   final Value<int?> updatedAt;
   const AppSettingsCompanion({
@@ -3434,6 +4017,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.themeMode = const Value.absent(),
     this.defaultView = const Value.absent(),
     this.notificationsEnabled = const Value.absent(),
+    this.strongReminders = const Value.absent(),
+    this.focusMinutes = const Value.absent(),
+    this.shortBreakMinutes = const Value.absent(),
+    this.longBreakMinutes = const Value.absent(),
+    this.roundsBeforeLongBreak = const Value.absent(),
+    this.autoStartNext = const Value.absent(),
+    this.defaultTimerMode = const Value.absent(),
+    this.midnightMode = const Value.absent(),
+    this.midnightEndHour = const Value.absent(),
     this.initializedAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -3442,6 +4034,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.themeMode = const Value.absent(),
     this.defaultView = const Value.absent(),
     this.notificationsEnabled = const Value.absent(),
+    this.strongReminders = const Value.absent(),
+    this.focusMinutes = const Value.absent(),
+    this.shortBreakMinutes = const Value.absent(),
+    this.longBreakMinutes = const Value.absent(),
+    this.roundsBeforeLongBreak = const Value.absent(),
+    this.autoStartNext = const Value.absent(),
+    this.defaultTimerMode = const Value.absent(),
+    this.midnightMode = const Value.absent(),
+    this.midnightEndHour = const Value.absent(),
     this.initializedAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -3450,6 +4051,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Expression<int>? themeMode,
     Expression<int>? defaultView,
     Expression<bool>? notificationsEnabled,
+    Expression<bool>? strongReminders,
+    Expression<int>? focusMinutes,
+    Expression<int>? shortBreakMinutes,
+    Expression<int>? longBreakMinutes,
+    Expression<int>? roundsBeforeLongBreak,
+    Expression<bool>? autoStartNext,
+    Expression<int>? defaultTimerMode,
+    Expression<bool>? midnightMode,
+    Expression<int>? midnightEndHour,
     Expression<int>? initializedAt,
     Expression<int>? updatedAt,
   }) {
@@ -3459,6 +4069,16 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       if (defaultView != null) 'default_view': defaultView,
       if (notificationsEnabled != null)
         'notifications_enabled': notificationsEnabled,
+      if (strongReminders != null) 'strong_reminders': strongReminders,
+      if (focusMinutes != null) 'focus_minutes': focusMinutes,
+      if (shortBreakMinutes != null) 'short_break_minutes': shortBreakMinutes,
+      if (longBreakMinutes != null) 'long_break_minutes': longBreakMinutes,
+      if (roundsBeforeLongBreak != null)
+        'rounds_before_long_break': roundsBeforeLongBreak,
+      if (autoStartNext != null) 'auto_start_next': autoStartNext,
+      if (defaultTimerMode != null) 'default_timer_mode': defaultTimerMode,
+      if (midnightMode != null) 'midnight_mode': midnightMode,
+      if (midnightEndHour != null) 'midnight_end_hour': midnightEndHour,
       if (initializedAt != null) 'initialized_at': initializedAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -3469,6 +4089,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Value<ThemeModeSetting>? themeMode,
     Value<DefaultView>? defaultView,
     Value<bool>? notificationsEnabled,
+    Value<bool>? strongReminders,
+    Value<int>? focusMinutes,
+    Value<int>? shortBreakMinutes,
+    Value<int>? longBreakMinutes,
+    Value<int>? roundsBeforeLongBreak,
+    Value<bool>? autoStartNext,
+    Value<FocusTimerMode>? defaultTimerMode,
+    Value<bool>? midnightMode,
+    Value<int>? midnightEndHour,
     Value<int?>? initializedAt,
     Value<int?>? updatedAt,
   }) {
@@ -3477,6 +4106,16 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       themeMode: themeMode ?? this.themeMode,
       defaultView: defaultView ?? this.defaultView,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+      strongReminders: strongReminders ?? this.strongReminders,
+      focusMinutes: focusMinutes ?? this.focusMinutes,
+      shortBreakMinutes: shortBreakMinutes ?? this.shortBreakMinutes,
+      longBreakMinutes: longBreakMinutes ?? this.longBreakMinutes,
+      roundsBeforeLongBreak:
+          roundsBeforeLongBreak ?? this.roundsBeforeLongBreak,
+      autoStartNext: autoStartNext ?? this.autoStartNext,
+      defaultTimerMode: defaultTimerMode ?? this.defaultTimerMode,
+      midnightMode: midnightMode ?? this.midnightMode,
+      midnightEndHour: midnightEndHour ?? this.midnightEndHour,
       initializedAt: initializedAt ?? this.initializedAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -3501,6 +4140,39 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     if (notificationsEnabled.present) {
       map['notifications_enabled'] = Variable<bool>(notificationsEnabled.value);
     }
+    if (strongReminders.present) {
+      map['strong_reminders'] = Variable<bool>(strongReminders.value);
+    }
+    if (focusMinutes.present) {
+      map['focus_minutes'] = Variable<int>(focusMinutes.value);
+    }
+    if (shortBreakMinutes.present) {
+      map['short_break_minutes'] = Variable<int>(shortBreakMinutes.value);
+    }
+    if (longBreakMinutes.present) {
+      map['long_break_minutes'] = Variable<int>(longBreakMinutes.value);
+    }
+    if (roundsBeforeLongBreak.present) {
+      map['rounds_before_long_break'] = Variable<int>(
+        roundsBeforeLongBreak.value,
+      );
+    }
+    if (autoStartNext.present) {
+      map['auto_start_next'] = Variable<bool>(autoStartNext.value);
+    }
+    if (defaultTimerMode.present) {
+      map['default_timer_mode'] = Variable<int>(
+        $AppSettingsTable.$converterdefaultTimerMode.toSql(
+          defaultTimerMode.value,
+        ),
+      );
+    }
+    if (midnightMode.present) {
+      map['midnight_mode'] = Variable<bool>(midnightMode.value);
+    }
+    if (midnightEndHour.present) {
+      map['midnight_end_hour'] = Variable<int>(midnightEndHour.value);
+    }
     if (initializedAt.present) {
       map['initialized_at'] = Variable<int>(initializedAt.value);
     }
@@ -3517,8 +4189,834 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
           ..write('themeMode: $themeMode, ')
           ..write('defaultView: $defaultView, ')
           ..write('notificationsEnabled: $notificationsEnabled, ')
+          ..write('strongReminders: $strongReminders, ')
+          ..write('focusMinutes: $focusMinutes, ')
+          ..write('shortBreakMinutes: $shortBreakMinutes, ')
+          ..write('longBreakMinutes: $longBreakMinutes, ')
+          ..write('roundsBeforeLongBreak: $roundsBeforeLongBreak, ')
+          ..write('autoStartNext: $autoStartNext, ')
+          ..write('defaultTimerMode: $defaultTimerMode, ')
+          ..write('midnightMode: $midnightMode, ')
+          ..write('midnightEndHour: $midnightEndHour, ')
           ..write('initializedAt: $initializedAt, ')
           ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $FocusSessionsTable extends FocusSessions
+    with TableInfo<$FocusSessionsTable, FocusSession> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $FocusSessionsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _taskIdMeta = const VerificationMeta('taskId');
+  @override
+  late final GeneratedColumn<String> taskId = GeneratedColumn<String>(
+    'task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES tasks (id) ON DELETE SET NULL',
+    ),
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
+  @override
+  late final GeneratedColumn<int> startedAt = GeneratedColumn<int>(
+    'started_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _endedAtMeta = const VerificationMeta(
+    'endedAt',
+  );
+  @override
+  late final GeneratedColumn<int> endedAt = GeneratedColumn<int>(
+    'ended_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _pausedMillisMeta = const VerificationMeta(
+    'pausedMillis',
+  );
+  @override
+  late final GeneratedColumn<int> pausedMillis = GeneratedColumn<int>(
+    'paused_millis',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _pausedAtMeta = const VerificationMeta(
+    'pausedAt',
+  );
+  @override
+  late final GeneratedColumn<int> pausedAt = GeneratedColumn<int>(
+    'paused_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _plannedSecondsMeta = const VerificationMeta(
+    'plannedSeconds',
+  );
+  @override
+  late final GeneratedColumn<int> plannedSeconds = GeneratedColumn<int>(
+    'planned_seconds',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _actualSecondsMeta = const VerificationMeta(
+    'actualSeconds',
+  );
+  @override
+  late final GeneratedColumn<int> actualSeconds = GeneratedColumn<int>(
+    'actual_seconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<FocusSessionKind, int> kind =
+      GeneratedColumn<int>(
+        'kind',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(0),
+      ).withConverter<FocusSessionKind>($FocusSessionsTable.$converterkind);
+  @override
+  late final GeneratedColumnWithTypeConverter<FocusTimerMode, int> timerMode =
+      GeneratedColumn<int>(
+        'timer_mode',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(1),
+      ).withConverter<FocusTimerMode>($FocusSessionsTable.$convertertimerMode);
+  static const VerificationMeta _logicalDateMeta = const VerificationMeta(
+    'logicalDate',
+  );
+  @override
+  late final GeneratedColumn<int> logicalDate = GeneratedColumn<int>(
+    'logical_date',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _completedMeta = const VerificationMeta(
+    'completed',
+  );
+  @override
+  late final GeneratedColumn<bool> completed = GeneratedColumn<bool>(
+    'completed',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("completed" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
+  @override
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+    'note',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    taskId,
+    startedAt,
+    endedAt,
+    pausedMillis,
+    pausedAt,
+    plannedSeconds,
+    actualSeconds,
+    kind,
+    timerMode,
+    logicalDate,
+    completed,
+    note,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'focus_sessions';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<FocusSession> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('task_id')) {
+      context.handle(
+        _taskIdMeta,
+        taskId.isAcceptableOrUnknown(data['task_id']!, _taskIdMeta),
+      );
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('ended_at')) {
+      context.handle(
+        _endedAtMeta,
+        endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta),
+      );
+    }
+    if (data.containsKey('paused_millis')) {
+      context.handle(
+        _pausedMillisMeta,
+        pausedMillis.isAcceptableOrUnknown(
+          data['paused_millis']!,
+          _pausedMillisMeta,
+        ),
+      );
+    }
+    if (data.containsKey('paused_at')) {
+      context.handle(
+        _pausedAtMeta,
+        pausedAt.isAcceptableOrUnknown(data['paused_at']!, _pausedAtMeta),
+      );
+    }
+    if (data.containsKey('planned_seconds')) {
+      context.handle(
+        _plannedSecondsMeta,
+        plannedSeconds.isAcceptableOrUnknown(
+          data['planned_seconds']!,
+          _plannedSecondsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('actual_seconds')) {
+      context.handle(
+        _actualSecondsMeta,
+        actualSeconds.isAcceptableOrUnknown(
+          data['actual_seconds']!,
+          _actualSecondsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('logical_date')) {
+      context.handle(
+        _logicalDateMeta,
+        logicalDate.isAcceptableOrUnknown(
+          data['logical_date']!,
+          _logicalDateMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_logicalDateMeta);
+    }
+    if (data.containsKey('completed')) {
+      context.handle(
+        _completedMeta,
+        completed.isAcceptableOrUnknown(data['completed']!, _completedMeta),
+      );
+    }
+    if (data.containsKey('note')) {
+      context.handle(
+        _noteMeta,
+        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  FocusSession map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return FocusSession(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      taskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}task_id'],
+      ),
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}started_at'],
+      )!,
+      endedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}ended_at'],
+      ),
+      pausedMillis: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}paused_millis'],
+      )!,
+      pausedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}paused_at'],
+      ),
+      plannedSeconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}planned_seconds'],
+      ),
+      actualSeconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}actual_seconds'],
+      )!,
+      kind: $FocusSessionsTable.$converterkind.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}kind'],
+        )!,
+      ),
+      timerMode: $FocusSessionsTable.$convertertimerMode.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}timer_mode'],
+        )!,
+      ),
+      logicalDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}logical_date'],
+      )!,
+      completed: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}completed'],
+      )!,
+      note: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}note'],
+      ),
+    );
+  }
+
+  @override
+  $FocusSessionsTable createAlias(String alias) {
+    return $FocusSessionsTable(attachedDatabase, alias);
+  }
+
+  static JsonTypeConverter2<FocusSessionKind, int, int> $converterkind =
+      const EnumIndexConverter<FocusSessionKind>(FocusSessionKind.values);
+  static JsonTypeConverter2<FocusTimerMode, int, int> $convertertimerMode =
+      const EnumIndexConverter<FocusTimerMode>(FocusTimerMode.values);
+}
+
+class FocusSession extends DataClass implements Insertable<FocusSession> {
+  final String id;
+
+  /// 归属任务。`null` = 没挂任务的自由专注。
+  final String? taskId;
+
+  /// 会话开始时刻，UTC 毫秒。
+  final int startedAt;
+
+  /// 结束时刻。`null` 表示还在进行中。
+  final int? endedAt;
+
+  /// 累计暂停时长（毫秒）。与 `FocusTimerState.pausedMillis` 直接对应。
+  ///
+  /// **只含已经结束的暂停**。正在进行中的那次暂停由 [pausedAt] 单独表示，
+  /// 因为它的时长要到恢复时才确定。
+  final int pausedMillis;
+
+  /// 当前这次暂停的开始时刻。非空 = 会话正暂停着。
+  ///
+  /// **这一列不在最初的设计稿里，是写实现时补的**：只有 [pausedMillis]
+  /// 的话，用户在暂停状态下被系统杀进程，重开后只能看到「从开始就一直跑着」，
+  /// 于是整段暂停时间会被安静地算成专注时间——而杀进程恰恰是这套设计
+  /// 必须扛住的场景。表随 v3 一起发布，此刻加列不需要额外迁移。
+  final int? pausedAt;
+
+  /// 计划时长（秒）。正计时模式为 `null`。
+  final int? plannedSeconds;
+
+  /// 实际时长（秒）。结束时写入，不含暂停。
+  final int actualSeconds;
+
+  /// 这是专注还是休息。
+  final FocusSessionKind kind;
+
+  /// 正计时还是倒计时。
+  final FocusTimerMode timerMode;
+
+  /// 归属的逻辑日（本地零点毫秒）。写入时按当时的设置冻结，见类文档。
+  final int logicalDate;
+
+  /// 是否走满了计划时长。正计时模式结束时为 `false`——它没有「走满」这回事。
+  final bool completed;
+
+  /// 这一笔的备注，会话结束后补填。
+  ///
+  /// **不在最初的设计稿里**：F3 的「记一笔」要求会话结束后可以写备注，
+  /// 而表里没有地方放。趁 v3 还没发布加进来，比之后为它单独开一次迁移便宜。
+  final String? note;
+  const FocusSession({
+    required this.id,
+    this.taskId,
+    required this.startedAt,
+    this.endedAt,
+    required this.pausedMillis,
+    this.pausedAt,
+    this.plannedSeconds,
+    required this.actualSeconds,
+    required this.kind,
+    required this.timerMode,
+    required this.logicalDate,
+    required this.completed,
+    this.note,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    if (!nullToAbsent || taskId != null) {
+      map['task_id'] = Variable<String>(taskId);
+    }
+    map['started_at'] = Variable<int>(startedAt);
+    if (!nullToAbsent || endedAt != null) {
+      map['ended_at'] = Variable<int>(endedAt);
+    }
+    map['paused_millis'] = Variable<int>(pausedMillis);
+    if (!nullToAbsent || pausedAt != null) {
+      map['paused_at'] = Variable<int>(pausedAt);
+    }
+    if (!nullToAbsent || plannedSeconds != null) {
+      map['planned_seconds'] = Variable<int>(plannedSeconds);
+    }
+    map['actual_seconds'] = Variable<int>(actualSeconds);
+    {
+      map['kind'] = Variable<int>(
+        $FocusSessionsTable.$converterkind.toSql(kind),
+      );
+    }
+    {
+      map['timer_mode'] = Variable<int>(
+        $FocusSessionsTable.$convertertimerMode.toSql(timerMode),
+      );
+    }
+    map['logical_date'] = Variable<int>(logicalDate);
+    map['completed'] = Variable<bool>(completed);
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    return map;
+  }
+
+  FocusSessionsCompanion toCompanion(bool nullToAbsent) {
+    return FocusSessionsCompanion(
+      id: Value(id),
+      taskId: taskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(taskId),
+      startedAt: Value(startedAt),
+      endedAt: endedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(endedAt),
+      pausedMillis: Value(pausedMillis),
+      pausedAt: pausedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(pausedAt),
+      plannedSeconds: plannedSeconds == null && nullToAbsent
+          ? const Value.absent()
+          : Value(plannedSeconds),
+      actualSeconds: Value(actualSeconds),
+      kind: Value(kind),
+      timerMode: Value(timerMode),
+      logicalDate: Value(logicalDate),
+      completed: Value(completed),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+    );
+  }
+
+  factory FocusSession.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return FocusSession(
+      id: serializer.fromJson<String>(json['id']),
+      taskId: serializer.fromJson<String?>(json['taskId']),
+      startedAt: serializer.fromJson<int>(json['startedAt']),
+      endedAt: serializer.fromJson<int?>(json['endedAt']),
+      pausedMillis: serializer.fromJson<int>(json['pausedMillis']),
+      pausedAt: serializer.fromJson<int?>(json['pausedAt']),
+      plannedSeconds: serializer.fromJson<int?>(json['plannedSeconds']),
+      actualSeconds: serializer.fromJson<int>(json['actualSeconds']),
+      kind: $FocusSessionsTable.$converterkind.fromJson(
+        serializer.fromJson<int>(json['kind']),
+      ),
+      timerMode: $FocusSessionsTable.$convertertimerMode.fromJson(
+        serializer.fromJson<int>(json['timerMode']),
+      ),
+      logicalDate: serializer.fromJson<int>(json['logicalDate']),
+      completed: serializer.fromJson<bool>(json['completed']),
+      note: serializer.fromJson<String?>(json['note']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'taskId': serializer.toJson<String?>(taskId),
+      'startedAt': serializer.toJson<int>(startedAt),
+      'endedAt': serializer.toJson<int?>(endedAt),
+      'pausedMillis': serializer.toJson<int>(pausedMillis),
+      'pausedAt': serializer.toJson<int?>(pausedAt),
+      'plannedSeconds': serializer.toJson<int?>(plannedSeconds),
+      'actualSeconds': serializer.toJson<int>(actualSeconds),
+      'kind': serializer.toJson<int>(
+        $FocusSessionsTable.$converterkind.toJson(kind),
+      ),
+      'timerMode': serializer.toJson<int>(
+        $FocusSessionsTable.$convertertimerMode.toJson(timerMode),
+      ),
+      'logicalDate': serializer.toJson<int>(logicalDate),
+      'completed': serializer.toJson<bool>(completed),
+      'note': serializer.toJson<String?>(note),
+    };
+  }
+
+  FocusSession copyWith({
+    String? id,
+    Value<String?> taskId = const Value.absent(),
+    int? startedAt,
+    Value<int?> endedAt = const Value.absent(),
+    int? pausedMillis,
+    Value<int?> pausedAt = const Value.absent(),
+    Value<int?> plannedSeconds = const Value.absent(),
+    int? actualSeconds,
+    FocusSessionKind? kind,
+    FocusTimerMode? timerMode,
+    int? logicalDate,
+    bool? completed,
+    Value<String?> note = const Value.absent(),
+  }) => FocusSession(
+    id: id ?? this.id,
+    taskId: taskId.present ? taskId.value : this.taskId,
+    startedAt: startedAt ?? this.startedAt,
+    endedAt: endedAt.present ? endedAt.value : this.endedAt,
+    pausedMillis: pausedMillis ?? this.pausedMillis,
+    pausedAt: pausedAt.present ? pausedAt.value : this.pausedAt,
+    plannedSeconds: plannedSeconds.present
+        ? plannedSeconds.value
+        : this.plannedSeconds,
+    actualSeconds: actualSeconds ?? this.actualSeconds,
+    kind: kind ?? this.kind,
+    timerMode: timerMode ?? this.timerMode,
+    logicalDate: logicalDate ?? this.logicalDate,
+    completed: completed ?? this.completed,
+    note: note.present ? note.value : this.note,
+  );
+  FocusSession copyWithCompanion(FocusSessionsCompanion data) {
+    return FocusSession(
+      id: data.id.present ? data.id.value : this.id,
+      taskId: data.taskId.present ? data.taskId.value : this.taskId,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
+      pausedMillis: data.pausedMillis.present
+          ? data.pausedMillis.value
+          : this.pausedMillis,
+      pausedAt: data.pausedAt.present ? data.pausedAt.value : this.pausedAt,
+      plannedSeconds: data.plannedSeconds.present
+          ? data.plannedSeconds.value
+          : this.plannedSeconds,
+      actualSeconds: data.actualSeconds.present
+          ? data.actualSeconds.value
+          : this.actualSeconds,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      timerMode: data.timerMode.present ? data.timerMode.value : this.timerMode,
+      logicalDate: data.logicalDate.present
+          ? data.logicalDate.value
+          : this.logicalDate,
+      completed: data.completed.present ? data.completed.value : this.completed,
+      note: data.note.present ? data.note.value : this.note,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('FocusSession(')
+          ..write('id: $id, ')
+          ..write('taskId: $taskId, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('pausedMillis: $pausedMillis, ')
+          ..write('pausedAt: $pausedAt, ')
+          ..write('plannedSeconds: $plannedSeconds, ')
+          ..write('actualSeconds: $actualSeconds, ')
+          ..write('kind: $kind, ')
+          ..write('timerMode: $timerMode, ')
+          ..write('logicalDate: $logicalDate, ')
+          ..write('completed: $completed, ')
+          ..write('note: $note')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    taskId,
+    startedAt,
+    endedAt,
+    pausedMillis,
+    pausedAt,
+    plannedSeconds,
+    actualSeconds,
+    kind,
+    timerMode,
+    logicalDate,
+    completed,
+    note,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is FocusSession &&
+          other.id == this.id &&
+          other.taskId == this.taskId &&
+          other.startedAt == this.startedAt &&
+          other.endedAt == this.endedAt &&
+          other.pausedMillis == this.pausedMillis &&
+          other.pausedAt == this.pausedAt &&
+          other.plannedSeconds == this.plannedSeconds &&
+          other.actualSeconds == this.actualSeconds &&
+          other.kind == this.kind &&
+          other.timerMode == this.timerMode &&
+          other.logicalDate == this.logicalDate &&
+          other.completed == this.completed &&
+          other.note == this.note);
+}
+
+class FocusSessionsCompanion extends UpdateCompanion<FocusSession> {
+  final Value<String> id;
+  final Value<String?> taskId;
+  final Value<int> startedAt;
+  final Value<int?> endedAt;
+  final Value<int> pausedMillis;
+  final Value<int?> pausedAt;
+  final Value<int?> plannedSeconds;
+  final Value<int> actualSeconds;
+  final Value<FocusSessionKind> kind;
+  final Value<FocusTimerMode> timerMode;
+  final Value<int> logicalDate;
+  final Value<bool> completed;
+  final Value<String?> note;
+  final Value<int> rowid;
+  const FocusSessionsCompanion({
+    this.id = const Value.absent(),
+    this.taskId = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.endedAt = const Value.absent(),
+    this.pausedMillis = const Value.absent(),
+    this.pausedAt = const Value.absent(),
+    this.plannedSeconds = const Value.absent(),
+    this.actualSeconds = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.timerMode = const Value.absent(),
+    this.logicalDate = const Value.absent(),
+    this.completed = const Value.absent(),
+    this.note = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  FocusSessionsCompanion.insert({
+    required String id,
+    this.taskId = const Value.absent(),
+    required int startedAt,
+    this.endedAt = const Value.absent(),
+    this.pausedMillis = const Value.absent(),
+    this.pausedAt = const Value.absent(),
+    this.plannedSeconds = const Value.absent(),
+    this.actualSeconds = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.timerMode = const Value.absent(),
+    required int logicalDate,
+    this.completed = const Value.absent(),
+    this.note = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       startedAt = Value(startedAt),
+       logicalDate = Value(logicalDate);
+  static Insertable<FocusSession> custom({
+    Expression<String>? id,
+    Expression<String>? taskId,
+    Expression<int>? startedAt,
+    Expression<int>? endedAt,
+    Expression<int>? pausedMillis,
+    Expression<int>? pausedAt,
+    Expression<int>? plannedSeconds,
+    Expression<int>? actualSeconds,
+    Expression<int>? kind,
+    Expression<int>? timerMode,
+    Expression<int>? logicalDate,
+    Expression<bool>? completed,
+    Expression<String>? note,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (taskId != null) 'task_id': taskId,
+      if (startedAt != null) 'started_at': startedAt,
+      if (endedAt != null) 'ended_at': endedAt,
+      if (pausedMillis != null) 'paused_millis': pausedMillis,
+      if (pausedAt != null) 'paused_at': pausedAt,
+      if (plannedSeconds != null) 'planned_seconds': plannedSeconds,
+      if (actualSeconds != null) 'actual_seconds': actualSeconds,
+      if (kind != null) 'kind': kind,
+      if (timerMode != null) 'timer_mode': timerMode,
+      if (logicalDate != null) 'logical_date': logicalDate,
+      if (completed != null) 'completed': completed,
+      if (note != null) 'note': note,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  FocusSessionsCompanion copyWith({
+    Value<String>? id,
+    Value<String?>? taskId,
+    Value<int>? startedAt,
+    Value<int?>? endedAt,
+    Value<int>? pausedMillis,
+    Value<int?>? pausedAt,
+    Value<int?>? plannedSeconds,
+    Value<int>? actualSeconds,
+    Value<FocusSessionKind>? kind,
+    Value<FocusTimerMode>? timerMode,
+    Value<int>? logicalDate,
+    Value<bool>? completed,
+    Value<String?>? note,
+    Value<int>? rowid,
+  }) {
+    return FocusSessionsCompanion(
+      id: id ?? this.id,
+      taskId: taskId ?? this.taskId,
+      startedAt: startedAt ?? this.startedAt,
+      endedAt: endedAt ?? this.endedAt,
+      pausedMillis: pausedMillis ?? this.pausedMillis,
+      pausedAt: pausedAt ?? this.pausedAt,
+      plannedSeconds: plannedSeconds ?? this.plannedSeconds,
+      actualSeconds: actualSeconds ?? this.actualSeconds,
+      kind: kind ?? this.kind,
+      timerMode: timerMode ?? this.timerMode,
+      logicalDate: logicalDate ?? this.logicalDate,
+      completed: completed ?? this.completed,
+      note: note ?? this.note,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (taskId.present) {
+      map['task_id'] = Variable<String>(taskId.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<int>(startedAt.value);
+    }
+    if (endedAt.present) {
+      map['ended_at'] = Variable<int>(endedAt.value);
+    }
+    if (pausedMillis.present) {
+      map['paused_millis'] = Variable<int>(pausedMillis.value);
+    }
+    if (pausedAt.present) {
+      map['paused_at'] = Variable<int>(pausedAt.value);
+    }
+    if (plannedSeconds.present) {
+      map['planned_seconds'] = Variable<int>(plannedSeconds.value);
+    }
+    if (actualSeconds.present) {
+      map['actual_seconds'] = Variable<int>(actualSeconds.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<int>(
+        $FocusSessionsTable.$converterkind.toSql(kind.value),
+      );
+    }
+    if (timerMode.present) {
+      map['timer_mode'] = Variable<int>(
+        $FocusSessionsTable.$convertertimerMode.toSql(timerMode.value),
+      );
+    }
+    if (logicalDate.present) {
+      map['logical_date'] = Variable<int>(logicalDate.value);
+    }
+    if (completed.present) {
+      map['completed'] = Variable<bool>(completed.value);
+    }
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('FocusSessionsCompanion(')
+          ..write('id: $id, ')
+          ..write('taskId: $taskId, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('pausedMillis: $pausedMillis, ')
+          ..write('pausedAt: $pausedAt, ')
+          ..write('plannedSeconds: $plannedSeconds, ')
+          ..write('actualSeconds: $actualSeconds, ')
+          ..write('kind: $kind, ')
+          ..write('timerMode: $timerMode, ')
+          ..write('logicalDate: $logicalDate, ')
+          ..write('completed: $completed, ')
+          ..write('note: $note, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -3537,6 +5035,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $SubtasksTable subtasks = $SubtasksTable(this);
   late final $RemindersTable reminders = $RemindersTable(this);
   late final $AppSettingsTable appSettings = $AppSettingsTable(this);
+  late final $FocusSessionsTable focusSessions = $FocusSessionsTable(this);
   late final Index taskListsSortOrder = Index(
     'task_lists_sort_order',
     'CREATE INDEX task_lists_sort_order ON task_lists (sort_order)',
@@ -3581,6 +5080,18 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'reminders_remind_at',
     'CREATE INDEX reminders_remind_at ON reminders (remind_at)',
   );
+  late final Index focusSessionsLogicalDate = Index(
+    'focus_sessions_logical_date',
+    'CREATE INDEX focus_sessions_logical_date ON focus_sessions (logical_date)',
+  );
+  late final Index focusSessionsTaskId = Index(
+    'focus_sessions_task_id',
+    'CREATE INDEX focus_sessions_task_id ON focus_sessions (task_id)',
+  );
+  late final Index focusSessionsStartedAt = Index(
+    'focus_sessions_started_at',
+    'CREATE INDEX focus_sessions_started_at ON focus_sessions (started_at)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3594,6 +5105,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     subtasks,
     reminders,
     appSettings,
+    focusSessions,
     taskListsSortOrder,
     tasksStatus,
     tasksDueDate,
@@ -3605,6 +5117,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     subtasksTaskSort,
     remindersTaskId,
     remindersRemindAt,
+    focusSessionsLogicalDate,
+    focusSessionsTaskId,
+    focusSessionsStartedAt,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -3649,6 +5164,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('reminders', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'tasks',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('focus_sessions', kind: UpdateKind.update)],
     ),
   ]);
 }
@@ -3990,9 +5512,11 @@ typedef $$RecurrenceRulesTableCreateCompanionBuilder =
       required String id,
       required RecurrenceFrequency frequency,
       Value<int> interval,
+      Value<int> startsOn,
       Value<String?> byWeekday,
       Value<String?> byMonthDay,
       Value<int?> endDate,
+      Value<int?> endCount,
       required int createdAt,
       Value<int> rowid,
     });
@@ -4001,9 +5525,11 @@ typedef $$RecurrenceRulesTableUpdateCompanionBuilder =
       Value<String> id,
       Value<RecurrenceFrequency> frequency,
       Value<int> interval,
+      Value<int> startsOn,
       Value<String?> byWeekday,
       Value<String?> byMonthDay,
       Value<int?> endDate,
+      Value<int?> endCount,
       Value<int> createdAt,
       Value<int> rowid,
     });
@@ -4064,6 +5590,11 @@ class $$RecurrenceRulesTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get startsOn => $composableBuilder(
+    column: $table.startsOn,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<String> get byWeekday => $composableBuilder(
     column: $table.byWeekday,
     builder: (column) => ColumnFilters(column),
@@ -4076,6 +5607,11 @@ class $$RecurrenceRulesTableFilterComposer
 
   ColumnFilters<int> get endDate => $composableBuilder(
     column: $table.endDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get endCount => $composableBuilder(
+    column: $table.endCount,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4134,6 +5670,11 @@ class $$RecurrenceRulesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get startsOn => $composableBuilder(
+    column: $table.startsOn,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get byWeekday => $composableBuilder(
     column: $table.byWeekday,
     builder: (column) => ColumnOrderings(column),
@@ -4146,6 +5687,11 @@ class $$RecurrenceRulesTableOrderingComposer
 
   ColumnOrderings<int> get endDate => $composableBuilder(
     column: $table.endDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get endCount => $composableBuilder(
+    column: $table.endCount,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -4173,6 +5719,9 @@ class $$RecurrenceRulesTableAnnotationComposer
   GeneratedColumn<int> get interval =>
       $composableBuilder(column: $table.interval, builder: (column) => column);
 
+  GeneratedColumn<int> get startsOn =>
+      $composableBuilder(column: $table.startsOn, builder: (column) => column);
+
   GeneratedColumn<String> get byWeekday =>
       $composableBuilder(column: $table.byWeekday, builder: (column) => column);
 
@@ -4183,6 +5732,9 @@ class $$RecurrenceRulesTableAnnotationComposer
 
   GeneratedColumn<int> get endDate =>
       $composableBuilder(column: $table.endDate, builder: (column) => column);
+
+  GeneratedColumn<int> get endCount =>
+      $composableBuilder(column: $table.endCount, builder: (column) => column);
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -4246,18 +5798,22 @@ class $$RecurrenceRulesTableTableManager
                 Value<String> id = const Value.absent(),
                 Value<RecurrenceFrequency> frequency = const Value.absent(),
                 Value<int> interval = const Value.absent(),
+                Value<int> startsOn = const Value.absent(),
                 Value<String?> byWeekday = const Value.absent(),
                 Value<String?> byMonthDay = const Value.absent(),
                 Value<int?> endDate = const Value.absent(),
+                Value<int?> endCount = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => RecurrenceRulesCompanion(
                 id: id,
                 frequency: frequency,
                 interval: interval,
+                startsOn: startsOn,
                 byWeekday: byWeekday,
                 byMonthDay: byMonthDay,
                 endDate: endDate,
+                endCount: endCount,
                 createdAt: createdAt,
                 rowid: rowid,
               ),
@@ -4266,18 +5822,22 @@ class $$RecurrenceRulesTableTableManager
                 required String id,
                 required RecurrenceFrequency frequency,
                 Value<int> interval = const Value.absent(),
+                Value<int> startsOn = const Value.absent(),
                 Value<String?> byWeekday = const Value.absent(),
                 Value<String?> byMonthDay = const Value.absent(),
                 Value<int?> endDate = const Value.absent(),
+                Value<int?> endCount = const Value.absent(),
                 required int createdAt,
                 Value<int> rowid = const Value.absent(),
               }) => RecurrenceRulesCompanion.insert(
                 id: id,
                 frequency: frequency,
                 interval: interval,
+                startsOn: startsOn,
                 byWeekday: byWeekday,
                 byMonthDay: byMonthDay,
                 endDate: endDate,
+                endCount: endCount,
                 createdAt: createdAt,
                 rowid: rowid,
               ),
@@ -4353,6 +5913,7 @@ typedef $$TasksTableCreateCompanionBuilder =
       required int createdAt,
       required int updatedAt,
       Value<int?> completedAt,
+      Value<int?> estimatedPomodoros,
       Value<int> rowid,
     });
 typedef $$TasksTableUpdateCompanionBuilder =
@@ -4369,6 +5930,7 @@ typedef $$TasksTableUpdateCompanionBuilder =
       Value<int> createdAt,
       Value<int> updatedAt,
       Value<int?> completedAt,
+      Value<int?> estimatedPomodoros,
       Value<int> rowid,
     });
 
@@ -4467,6 +6029,24 @@ final class $$TasksTableReferences
       manager.$state.copyWith(prefetchedData: cache),
     );
   }
+
+  static MultiTypedResultKey<$FocusSessionsTable, List<FocusSession>>
+  _focusSessionsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.focusSessions,
+    aliasName: $_aliasNameGenerator(db.tasks.id, db.focusSessions.taskId),
+  );
+
+  $$FocusSessionsTableProcessedTableManager get focusSessionsRefs {
+    final manager = $$FocusSessionsTableTableManager(
+      $_db,
+      $_db.focusSessions,
+    ).filter((f) => f.taskId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_focusSessionsRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
 }
 
 class $$TasksTableFilterComposer extends Composer<_$AppDatabase, $TasksTable> {
@@ -4526,6 +6106,11 @@ class $$TasksTableFilterComposer extends Composer<_$AppDatabase, $TasksTable> {
 
   ColumnFilters<int> get completedAt => $composableBuilder(
     column: $table.completedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get estimatedPomodoros => $composableBuilder(
+    column: $table.estimatedPomodoros,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4649,6 +6234,31 @@ class $$TasksTableFilterComposer extends Composer<_$AppDatabase, $TasksTable> {
     );
     return f(composer);
   }
+
+  Expression<bool> focusSessionsRefs(
+    Expression<bool> Function($$FocusSessionsTableFilterComposer f) f,
+  ) {
+    final $$FocusSessionsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.focusSessions,
+      getReferencedColumn: (t) => t.taskId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$FocusSessionsTableFilterComposer(
+            $db: $db,
+            $table: $db.focusSessions,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$TasksTableOrderingComposer
@@ -4707,6 +6317,11 @@ class $$TasksTableOrderingComposer
 
   ColumnOrderings<int> get completedAt => $composableBuilder(
     column: $table.completedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get estimatedPomodoros => $composableBuilder(
+    column: $table.estimatedPomodoros,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -4797,6 +6412,11 @@ class $$TasksTableAnnotationComposer
 
   GeneratedColumn<int> get completedAt => $composableBuilder(
     column: $table.completedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get estimatedPomodoros => $composableBuilder(
+    column: $table.estimatedPomodoros,
     builder: (column) => column,
   );
 
@@ -4920,6 +6540,31 @@ class $$TasksTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> focusSessionsRefs<T extends Object>(
+    Expression<T> Function($$FocusSessionsTableAnnotationComposer a) f,
+  ) {
+    final $$FocusSessionsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.focusSessions,
+      getReferencedColumn: (t) => t.taskId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$FocusSessionsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.focusSessions,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$TasksTableTableManager
@@ -4941,6 +6586,7 @@ class $$TasksTableTableManager
             bool taskTagsRefs,
             bool subtasksRefs,
             bool remindersRefs,
+            bool focusSessionsRefs,
           })
         > {
   $$TasksTableTableManager(_$AppDatabase db, $TasksTable table)
@@ -4968,6 +6614,7 @@ class $$TasksTableTableManager
                 Value<int> createdAt = const Value.absent(),
                 Value<int> updatedAt = const Value.absent(),
                 Value<int?> completedAt = const Value.absent(),
+                Value<int?> estimatedPomodoros = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => TasksCompanion(
                 id: id,
@@ -4982,6 +6629,7 @@ class $$TasksTableTableManager
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 completedAt: completedAt,
+                estimatedPomodoros: estimatedPomodoros,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -4998,6 +6646,7 @@ class $$TasksTableTableManager
                 required int createdAt,
                 required int updatedAt,
                 Value<int?> completedAt = const Value.absent(),
+                Value<int?> estimatedPomodoros = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => TasksCompanion.insert(
                 id: id,
@@ -5012,6 +6661,7 @@ class $$TasksTableTableManager
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 completedAt: completedAt,
+                estimatedPomodoros: estimatedPomodoros,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -5027,6 +6677,7 @@ class $$TasksTableTableManager
                 taskTagsRefs = false,
                 subtasksRefs = false,
                 remindersRefs = false,
+                focusSessionsRefs = false,
               }) {
                 return PrefetchHooks(
                   db: db,
@@ -5034,6 +6685,7 @@ class $$TasksTableTableManager
                     if (taskTagsRefs) db.taskTags,
                     if (subtasksRefs) db.subtasks,
                     if (remindersRefs) db.reminders,
+                    if (focusSessionsRefs) db.focusSessions,
                   ],
                   addJoins:
                       <
@@ -5133,6 +6785,27 @@ class $$TasksTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (focusSessionsRefs)
+                        await $_getPrefetchedData<
+                          Task,
+                          $TasksTable,
+                          FocusSession
+                        >(
+                          currentTable: table,
+                          referencedTable: $$TasksTableReferences
+                              ._focusSessionsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$TasksTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).focusSessionsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.taskId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                     ];
                   },
                 );
@@ -5159,6 +6832,7 @@ typedef $$TasksTableProcessedTableManager =
         bool taskTagsRefs,
         bool subtasksRefs,
         bool remindersRefs,
+        bool focusSessionsRefs,
       })
     >;
 typedef $$TagsTableCreateCompanionBuilder =
@@ -6461,6 +8135,15 @@ typedef $$AppSettingsTableCreateCompanionBuilder =
       Value<ThemeModeSetting> themeMode,
       Value<DefaultView> defaultView,
       Value<bool> notificationsEnabled,
+      Value<bool> strongReminders,
+      Value<int> focusMinutes,
+      Value<int> shortBreakMinutes,
+      Value<int> longBreakMinutes,
+      Value<int> roundsBeforeLongBreak,
+      Value<bool> autoStartNext,
+      Value<FocusTimerMode> defaultTimerMode,
+      Value<bool> midnightMode,
+      Value<int> midnightEndHour,
       Value<int?> initializedAt,
       Value<int?> updatedAt,
     });
@@ -6470,6 +8153,15 @@ typedef $$AppSettingsTableUpdateCompanionBuilder =
       Value<ThemeModeSetting> themeMode,
       Value<DefaultView> defaultView,
       Value<bool> notificationsEnabled,
+      Value<bool> strongReminders,
+      Value<int> focusMinutes,
+      Value<int> shortBreakMinutes,
+      Value<int> longBreakMinutes,
+      Value<int> roundsBeforeLongBreak,
+      Value<bool> autoStartNext,
+      Value<FocusTimerMode> defaultTimerMode,
+      Value<bool> midnightMode,
+      Value<int> midnightEndHour,
       Value<int?> initializedAt,
       Value<int?> updatedAt,
     });
@@ -6502,6 +8194,52 @@ class $$AppSettingsTableFilterComposer
 
   ColumnFilters<bool> get notificationsEnabled => $composableBuilder(
     column: $table.notificationsEnabled,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get strongReminders => $composableBuilder(
+    column: $table.strongReminders,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get focusMinutes => $composableBuilder(
+    column: $table.focusMinutes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get shortBreakMinutes => $composableBuilder(
+    column: $table.shortBreakMinutes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get longBreakMinutes => $composableBuilder(
+    column: $table.longBreakMinutes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get roundsBeforeLongBreak => $composableBuilder(
+    column: $table.roundsBeforeLongBreak,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get autoStartNext => $composableBuilder(
+    column: $table.autoStartNext,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<FocusTimerMode, FocusTimerMode, int>
+  get defaultTimerMode => $composableBuilder(
+    column: $table.defaultTimerMode,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
+  );
+
+  ColumnFilters<bool> get midnightMode => $composableBuilder(
+    column: $table.midnightMode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get midnightEndHour => $composableBuilder(
+    column: $table.midnightEndHour,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -6545,6 +8283,51 @@ class $$AppSettingsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get strongReminders => $composableBuilder(
+    column: $table.strongReminders,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get focusMinutes => $composableBuilder(
+    column: $table.focusMinutes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get shortBreakMinutes => $composableBuilder(
+    column: $table.shortBreakMinutes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get longBreakMinutes => $composableBuilder(
+    column: $table.longBreakMinutes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get roundsBeforeLongBreak => $composableBuilder(
+    column: $table.roundsBeforeLongBreak,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get autoStartNext => $composableBuilder(
+    column: $table.autoStartNext,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get defaultTimerMode => $composableBuilder(
+    column: $table.defaultTimerMode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get midnightMode => $composableBuilder(
+    column: $table.midnightMode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get midnightEndHour => $composableBuilder(
+    column: $table.midnightEndHour,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get initializedAt => $composableBuilder(
     column: $table.initializedAt,
     builder: (column) => ColumnOrderings(column),
@@ -6579,6 +8362,52 @@ class $$AppSettingsTableAnnotationComposer
 
   GeneratedColumn<bool> get notificationsEnabled => $composableBuilder(
     column: $table.notificationsEnabled,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get strongReminders => $composableBuilder(
+    column: $table.strongReminders,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get focusMinutes => $composableBuilder(
+    column: $table.focusMinutes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get shortBreakMinutes => $composableBuilder(
+    column: $table.shortBreakMinutes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get longBreakMinutes => $composableBuilder(
+    column: $table.longBreakMinutes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get roundsBeforeLongBreak => $composableBuilder(
+    column: $table.roundsBeforeLongBreak,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get autoStartNext => $composableBuilder(
+    column: $table.autoStartNext,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<FocusTimerMode, int> get defaultTimerMode =>
+      $composableBuilder(
+        column: $table.defaultTimerMode,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<bool> get midnightMode => $composableBuilder(
+    column: $table.midnightMode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get midnightEndHour => $composableBuilder(
+    column: $table.midnightEndHour,
     builder: (column) => column,
   );
 
@@ -6626,6 +8455,15 @@ class $$AppSettingsTableTableManager
                 Value<ThemeModeSetting> themeMode = const Value.absent(),
                 Value<DefaultView> defaultView = const Value.absent(),
                 Value<bool> notificationsEnabled = const Value.absent(),
+                Value<bool> strongReminders = const Value.absent(),
+                Value<int> focusMinutes = const Value.absent(),
+                Value<int> shortBreakMinutes = const Value.absent(),
+                Value<int> longBreakMinutes = const Value.absent(),
+                Value<int> roundsBeforeLongBreak = const Value.absent(),
+                Value<bool> autoStartNext = const Value.absent(),
+                Value<FocusTimerMode> defaultTimerMode = const Value.absent(),
+                Value<bool> midnightMode = const Value.absent(),
+                Value<int> midnightEndHour = const Value.absent(),
                 Value<int?> initializedAt = const Value.absent(),
                 Value<int?> updatedAt = const Value.absent(),
               }) => AppSettingsCompanion(
@@ -6633,6 +8471,15 @@ class $$AppSettingsTableTableManager
                 themeMode: themeMode,
                 defaultView: defaultView,
                 notificationsEnabled: notificationsEnabled,
+                strongReminders: strongReminders,
+                focusMinutes: focusMinutes,
+                shortBreakMinutes: shortBreakMinutes,
+                longBreakMinutes: longBreakMinutes,
+                roundsBeforeLongBreak: roundsBeforeLongBreak,
+                autoStartNext: autoStartNext,
+                defaultTimerMode: defaultTimerMode,
+                midnightMode: midnightMode,
+                midnightEndHour: midnightEndHour,
                 initializedAt: initializedAt,
                 updatedAt: updatedAt,
               ),
@@ -6642,6 +8489,15 @@ class $$AppSettingsTableTableManager
                 Value<ThemeModeSetting> themeMode = const Value.absent(),
                 Value<DefaultView> defaultView = const Value.absent(),
                 Value<bool> notificationsEnabled = const Value.absent(),
+                Value<bool> strongReminders = const Value.absent(),
+                Value<int> focusMinutes = const Value.absent(),
+                Value<int> shortBreakMinutes = const Value.absent(),
+                Value<int> longBreakMinutes = const Value.absent(),
+                Value<int> roundsBeforeLongBreak = const Value.absent(),
+                Value<bool> autoStartNext = const Value.absent(),
+                Value<FocusTimerMode> defaultTimerMode = const Value.absent(),
+                Value<bool> midnightMode = const Value.absent(),
+                Value<int> midnightEndHour = const Value.absent(),
                 Value<int?> initializedAt = const Value.absent(),
                 Value<int?> updatedAt = const Value.absent(),
               }) => AppSettingsCompanion.insert(
@@ -6649,6 +8505,15 @@ class $$AppSettingsTableTableManager
                 themeMode: themeMode,
                 defaultView: defaultView,
                 notificationsEnabled: notificationsEnabled,
+                strongReminders: strongReminders,
+                focusMinutes: focusMinutes,
+                shortBreakMinutes: shortBreakMinutes,
+                longBreakMinutes: longBreakMinutes,
+                roundsBeforeLongBreak: roundsBeforeLongBreak,
+                autoStartNext: autoStartNext,
+                defaultTimerMode: defaultTimerMode,
+                midnightMode: midnightMode,
+                midnightEndHour: midnightEndHour,
                 initializedAt: initializedAt,
                 updatedAt: updatedAt,
               ),
@@ -6677,6 +8542,490 @@ typedef $$AppSettingsTableProcessedTableManager =
       AppSetting,
       PrefetchHooks Function()
     >;
+typedef $$FocusSessionsTableCreateCompanionBuilder =
+    FocusSessionsCompanion Function({
+      required String id,
+      Value<String?> taskId,
+      required int startedAt,
+      Value<int?> endedAt,
+      Value<int> pausedMillis,
+      Value<int?> pausedAt,
+      Value<int?> plannedSeconds,
+      Value<int> actualSeconds,
+      Value<FocusSessionKind> kind,
+      Value<FocusTimerMode> timerMode,
+      required int logicalDate,
+      Value<bool> completed,
+      Value<String?> note,
+      Value<int> rowid,
+    });
+typedef $$FocusSessionsTableUpdateCompanionBuilder =
+    FocusSessionsCompanion Function({
+      Value<String> id,
+      Value<String?> taskId,
+      Value<int> startedAt,
+      Value<int?> endedAt,
+      Value<int> pausedMillis,
+      Value<int?> pausedAt,
+      Value<int?> plannedSeconds,
+      Value<int> actualSeconds,
+      Value<FocusSessionKind> kind,
+      Value<FocusTimerMode> timerMode,
+      Value<int> logicalDate,
+      Value<bool> completed,
+      Value<String?> note,
+      Value<int> rowid,
+    });
+
+final class $$FocusSessionsTableReferences
+    extends BaseReferences<_$AppDatabase, $FocusSessionsTable, FocusSession> {
+  $$FocusSessionsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $TasksTable _taskIdTable(_$AppDatabase db) => db.tasks.createAlias(
+    $_aliasNameGenerator(db.focusSessions.taskId, db.tasks.id),
+  );
+
+  $$TasksTableProcessedTableManager? get taskId {
+    final $_column = $_itemColumn<String>('task_id');
+    if ($_column == null) return null;
+    final manager = $$TasksTableTableManager(
+      $_db,
+      $_db.tasks,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_taskIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$FocusSessionsTableFilterComposer
+    extends Composer<_$AppDatabase, $FocusSessionsTable> {
+  $$FocusSessionsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get endedAt => $composableBuilder(
+    column: $table.endedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get pausedMillis => $composableBuilder(
+    column: $table.pausedMillis,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get pausedAt => $composableBuilder(
+    column: $table.pausedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get plannedSeconds => $composableBuilder(
+    column: $table.plannedSeconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get actualSeconds => $composableBuilder(
+    column: $table.actualSeconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<FocusSessionKind, FocusSessionKind, int>
+  get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<FocusTimerMode, FocusTimerMode, int>
+  get timerMode => $composableBuilder(
+    column: $table.timerMode,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
+  );
+
+  ColumnFilters<int> get logicalDate => $composableBuilder(
+    column: $table.logicalDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get completed => $composableBuilder(
+    column: $table.completed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$TasksTableFilterComposer get taskId {
+    final $$TasksTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.taskId,
+      referencedTable: $db.tasks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$TasksTableFilterComposer(
+            $db: $db,
+            $table: $db.tasks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$FocusSessionsTableOrderingComposer
+    extends Composer<_$AppDatabase, $FocusSessionsTable> {
+  $$FocusSessionsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get endedAt => $composableBuilder(
+    column: $table.endedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get pausedMillis => $composableBuilder(
+    column: $table.pausedMillis,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get pausedAt => $composableBuilder(
+    column: $table.pausedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get plannedSeconds => $composableBuilder(
+    column: $table.plannedSeconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get actualSeconds => $composableBuilder(
+    column: $table.actualSeconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get timerMode => $composableBuilder(
+    column: $table.timerMode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get logicalDate => $composableBuilder(
+    column: $table.logicalDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get completed => $composableBuilder(
+    column: $table.completed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$TasksTableOrderingComposer get taskId {
+    final $$TasksTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.taskId,
+      referencedTable: $db.tasks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$TasksTableOrderingComposer(
+            $db: $db,
+            $table: $db.tasks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$FocusSessionsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $FocusSessionsTable> {
+  $$FocusSessionsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get endedAt =>
+      $composableBuilder(column: $table.endedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get pausedMillis => $composableBuilder(
+    column: $table.pausedMillis,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get pausedAt =>
+      $composableBuilder(column: $table.pausedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get plannedSeconds => $composableBuilder(
+    column: $table.plannedSeconds,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get actualSeconds => $composableBuilder(
+    column: $table.actualSeconds,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<FocusSessionKind, int> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<FocusTimerMode, int> get timerMode =>
+      $composableBuilder(column: $table.timerMode, builder: (column) => column);
+
+  GeneratedColumn<int> get logicalDate => $composableBuilder(
+    column: $table.logicalDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get completed =>
+      $composableBuilder(column: $table.completed, builder: (column) => column);
+
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
+
+  $$TasksTableAnnotationComposer get taskId {
+    final $$TasksTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.taskId,
+      referencedTable: $db.tasks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$TasksTableAnnotationComposer(
+            $db: $db,
+            $table: $db.tasks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$FocusSessionsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $FocusSessionsTable,
+          FocusSession,
+          $$FocusSessionsTableFilterComposer,
+          $$FocusSessionsTableOrderingComposer,
+          $$FocusSessionsTableAnnotationComposer,
+          $$FocusSessionsTableCreateCompanionBuilder,
+          $$FocusSessionsTableUpdateCompanionBuilder,
+          (FocusSession, $$FocusSessionsTableReferences),
+          FocusSession,
+          PrefetchHooks Function({bool taskId})
+        > {
+  $$FocusSessionsTableTableManager(_$AppDatabase db, $FocusSessionsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$FocusSessionsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$FocusSessionsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$FocusSessionsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String?> taskId = const Value.absent(),
+                Value<int> startedAt = const Value.absent(),
+                Value<int?> endedAt = const Value.absent(),
+                Value<int> pausedMillis = const Value.absent(),
+                Value<int?> pausedAt = const Value.absent(),
+                Value<int?> plannedSeconds = const Value.absent(),
+                Value<int> actualSeconds = const Value.absent(),
+                Value<FocusSessionKind> kind = const Value.absent(),
+                Value<FocusTimerMode> timerMode = const Value.absent(),
+                Value<int> logicalDate = const Value.absent(),
+                Value<bool> completed = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => FocusSessionsCompanion(
+                id: id,
+                taskId: taskId,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                pausedMillis: pausedMillis,
+                pausedAt: pausedAt,
+                plannedSeconds: plannedSeconds,
+                actualSeconds: actualSeconds,
+                kind: kind,
+                timerMode: timerMode,
+                logicalDate: logicalDate,
+                completed: completed,
+                note: note,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                Value<String?> taskId = const Value.absent(),
+                required int startedAt,
+                Value<int?> endedAt = const Value.absent(),
+                Value<int> pausedMillis = const Value.absent(),
+                Value<int?> pausedAt = const Value.absent(),
+                Value<int?> plannedSeconds = const Value.absent(),
+                Value<int> actualSeconds = const Value.absent(),
+                Value<FocusSessionKind> kind = const Value.absent(),
+                Value<FocusTimerMode> timerMode = const Value.absent(),
+                required int logicalDate,
+                Value<bool> completed = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => FocusSessionsCompanion.insert(
+                id: id,
+                taskId: taskId,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                pausedMillis: pausedMillis,
+                pausedAt: pausedAt,
+                plannedSeconds: plannedSeconds,
+                actualSeconds: actualSeconds,
+                kind: kind,
+                timerMode: timerMode,
+                logicalDate: logicalDate,
+                completed: completed,
+                note: note,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$FocusSessionsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({taskId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (taskId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.taskId,
+                                referencedTable: $$FocusSessionsTableReferences
+                                    ._taskIdTable(db),
+                                referencedColumn: $$FocusSessionsTableReferences
+                                    ._taskIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$FocusSessionsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $FocusSessionsTable,
+      FocusSession,
+      $$FocusSessionsTableFilterComposer,
+      $$FocusSessionsTableOrderingComposer,
+      $$FocusSessionsTableAnnotationComposer,
+      $$FocusSessionsTableCreateCompanionBuilder,
+      $$FocusSessionsTableUpdateCompanionBuilder,
+      (FocusSession, $$FocusSessionsTableReferences),
+      FocusSession,
+      PrefetchHooks Function({bool taskId})
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -6696,4 +9045,6 @@ class $AppDatabaseManager {
       $$RemindersTableTableManager(_db, _db.reminders);
   $$AppSettingsTableTableManager get appSettings =>
       $$AppSettingsTableTableManager(_db, _db.appSettings);
+  $$FocusSessionsTableTableManager get focusSessions =>
+      $$FocusSessionsTableTableManager(_db, _db.focusSessions);
 }

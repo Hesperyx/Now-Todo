@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件的布局。
+
+     RemoteViews 只认一部分视图与属性：这里只有 LinearLayout / TextView /
+     View，没有自定义控件，也没有 ConstraintLayout（它得走 RemoteViews 的
+     兼容层，而这里本来就不需要约束）。
+
+     颜色一个都不写在这里：深色与浅色两套由 Dart 侧算好传来，由
+     FocusWidgetProvider 按系统当前的夜间模式挑一套，用 setBackgroundColor /
+     setTextColor 写进来。所以这里既不写 android:background，也不写
+     android:textColor。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/widget_headline"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="@string/focus_widget_empty_headline"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/widget_caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="@string/focus_widget_empty_caption"
+        android:textSize="12sp" />
+
+    <!-- 最近七天，每天一根柱子。高度撑满、宽度等分（见 FocusWidgetBar）。 -->
+    <LinearLayout
+        android:id="@+id/widget_bars"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <View
+            android:id="@+id/widget_bar_0"
+            style="@style/FocusWidgetBar"
+            android:layout_marginEnd="4dp" />
+
+        <View
+            android:id="@+id/widget_bar_1"
+            style="@style/FocusWidgetBar"
+            android:layout_marginEnd="4dp" />
+
+        <View
+            android:id="@+id/widget_bar_2"
+            style="@style/FocusWidgetBar"
+            android:layout_marginEnd="4dp" />
+
+        <View
+            android:id="@+id/widget_bar_3"
+            style="@style/FocusWidgetBar"
+            android:layout_marginEnd="4dp" />
+
+        <View
+            android:id="@+id/widget_bar_4"
+            style="@style/FocusWidgetBar"
+            android:layout_marginEnd="4dp" />
+
+        <View
+            android:id="@+id/widget_bar_5"
+            style="@style/FocusWidgetBar"
+            android:layout_marginEnd="4dp" />
+
+        <!-- 最后一根不留下边距：七根柱子的总宽正好等于可用宽度。 -->
+        <View
+            android:id="@+id/widget_bar_6"
+            style="@style/FocusWidgetBar" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_week_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/focus_widget_week_label"
+        android:textSize="10sp" />
+</LinearLayout>
