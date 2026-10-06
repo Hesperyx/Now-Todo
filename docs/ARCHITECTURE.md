@@ -701,7 +701,10 @@ FocusSessionRepository.watchRunning() ──变化──┐
 
 ## 13. 构建与发布
 
-- CI（GitHub Actions）在每次 PR 上执行：`dart format` 校验 → `flutter analyze` → `flutter test` → Android debug 构建。
+- CI（GitHub Actions）在 `main` 的推送与 PR 上执行：`dart format` 校验 → `flutter analyze` →
+  `flutter test` → Android debug 构建；跑在 ubuntu 上，与开发机的 Windows 互为补集
+  （原生 sqlite 库的来源就不同：Windows 退回 `winsqlite3.dll`，Linux 用 `libsqlite3.so.0`）。
+  同一套门在开发机上由 `tool/release_check.ps1` 执行，两边都绿才算过。
 - **生成的 `*.g.dart` 提交入库**，克隆后可直接构建；CI 与本地发布脚本都会重跑一次
   `build_runner` 校验生成产物与源码一致。**校验范围只看 `lib/` 与 `test/`**：
   `pubspec.lock` 里 116 行 `url:` 记的是「依赖从哪个 host 拉下来」，开发机设了
