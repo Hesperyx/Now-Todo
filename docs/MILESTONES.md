@@ -30,30 +30,39 @@
 - [x] `flutter pub get` 成功
 - [x] 仓库治理文件齐备，符合 PRD「开源与捐赠」章节要求
 - [x] CI 工作流在 PR 上触发（格式检查 / 静态分析 / 单元测试 / Android 构建）
-- [ ] 在单人开发场景下人工执行过一遍 CI 的全部命令
+- [x] 在单人开发场景下人工执行过一遍 CI 的全部命令
+
+  > 2026-10-06 本机实测：`flutter pub get` → `dart run build_runner build`（跑完 `git diff` 无输出，
+  > 产物哈希 `4A8AADBE…D56E5B` 前后一致）→ `dart format --output=none --set-exit-if-changed .`（退出 0）
+  > → `flutter analyze`（`No issues found!`）→ `flutter test`（68 条全绿），全部通过。
+  >
+  > **例外**：CI 里的 `flutter build apk --debug` 未能在这台开发机上执行——本机 Android SDK
+  > 缺 `cmdline-tools` 且 licenses 未接受。该步骤目前只在 CI 与已授权的开发机上得到验证。
 
 ---
 
 ## M1 · 数据层
 
-**状态**：未开始
+**状态**：进行中
 
 **交付物**
 
-- `lib/data/database/` 下全部 Drift 表定义：`tasks`、`task_lists`、`tags`、`task_tags`、`subtasks`、`reminders`、`recurrence_rules`、`settings`。
-- 外键约束与 `ON DELETE CASCADE`（任务删除时级联清理子任务、提醒、标签关联）。
-- 索引：`tasks(status)`、`tasks(due_date)`、`tasks(list_id)`、`subtasks(task_id)`、`reminders(task_id)`、`task_tags(tag_id)`。
-- 每个聚合的 DAO，以及 `lib/data/repositories/` 下的仓储接口与实现。
-- 领域模型与枚举（`Priority`、`TaskStatus`、`RecurrenceFrequency`、`RepeatType`）。
-- `MigrationStrategy` 骨架 + `dart run drift_dev schema dump` 生成的 schema 快照。
+- `lib/data/database/` 下全部 Drift 表定义：`tasks`、`task_lists`、`tags`、`task_tags`、`subtasks`、`reminders`、`recurrence_rules`、`settings`。✅ 8 张表齐备
+- 外键约束与 `ON DELETE CASCADE`（任务删除时级联清理子任务、提醒、标签关联）。✅ 已开启 `PRAGMA foreign_keys`；`subtasks` / `task_tags` / `reminders` 的 `taskId` 均为 `KeyAction.cascade`，`tasks.listId` 与 `tasks.recurrenceRuleId` 为 `setNull`
+- 索引：`tasks(status)`、`tasks(due_date)`、`tasks(list_id)`、`subtasks(task_id)`、`reminders(task_id)`、`task_tags(tag_id)`。✅ 六条全部存在，另有 `tasks_recurrence_rule_id`、`subtasks_task_sort`、`reminders_remind_at`、`tags_name`（唯一）四条
+- 每个聚合的 DAO，以及 `lib/data/repositories/` 下的仓储接口与实现。⚠️ **未按字面实现**：项目只做仓储层，没有 `DatabaseAccessor` 子类形式的 DAO
+- 领域模型与枚举（`Priority`、`TaskStatus`、`RecurrenceFrequency`、`RepeatType`）。✅ `lib/core/models/enums.dart` 含 6 个枚举：`TaskPriority` / `TaskStatus` / `RecurrenceFrequency` / `ReminderRepeatType` / `ThemeModeSetting` / `DefaultView`
+- `MigrationStrategy` 骨架 + `dart run drift_dev schema dump` 生成的 schema 快照。⚠️ 骨架已在 `app_database.dart:44-51`（`schemaVersion => 1` + `onUpgrade`）；**schema 快照尚未生成，仓库里没有 `drift_schemas/`**
 
 **验收标准**
 
-- [ ] `AppDatabase` 能在内存模式（`NativeDatabase.memory()`）下打开，用于测试
-- [ ] 任务删除后，其子任务 / 提醒 / 标签关联记录全部消失（有测试）
-- [ ] 仓储层不向上层抛出 Drift 生成类型（`features/` 的 import 静态检查通过）
-- [ ] `flutter analyze` 零告警
-- [ ] 仓储测试覆盖增删改查与级联删除
+- [x] `AppDatabase` 能在内存模式（`NativeDatabase.memory()`）下打开，用于测试
+- [ ] 任务删除后，其子任务 / 提醒 / 标签关联记录全部消失（有测试）——**子任务已覆盖**（`test/data/task_repository_test.dart`「删掉任务会把子任务一起带走」，同时验证了 `PRAGMA foreign_keys` 生效）；**提醒与标签关联尚无对应测试**
+- [x] 仓储层不向上层抛出 Drift 生成类型（`features/` 的 import 静态检查通过）
+- [x] `flutter analyze` 零告警
+- [ ] 仓储测试覆盖增删改查与级联删除——增删改查已覆盖，级联删除仅覆盖子任务
+
+**待补**：提醒 / 标签关联的级联删除测试；`drift_schemas/` schema 快照；确认「仅仓储、不做 DAO」是最终决策——若是，上面第 4 条交付物应改写。
 
 ---
 
