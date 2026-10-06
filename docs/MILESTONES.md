@@ -414,7 +414,7 @@ SnackBar 的观感、以及通知栏在那台机器的系统主题下长什么�
 - 应用图标与启动图。
 - Android 签名配置、`applicationId` 最终确认。（iOS 签名与 `bundle id` 随 iOS 恢复时再做。）
 - 商店文案、截图、分类与内容分级信息。
-- 发布检查清单（见下），前四项由 `tool/release_check.ps1` 一条命令跑完。
+- 发布检查清单（见下），前五项由 `tool/release_check.ps1` 一条命令跑完。
 
 **验收标准**
 
@@ -456,18 +456,21 @@ SnackBar 的观感、以及通知栏在那台机器的系统主题下长什么�
   用例只把「碰系统 UI 的部件」换掉（分享面板在自动化里点不到），其余真库、真通知、真时区。
   其中一条刻意绕开界面的时间选择器，从仓储写一条提醒、再问系统要 `pendingNotificationRequests()`，
   因为要证明的是「提醒进库 → 系统里真的多了个闹钟」，而系统对话框里拨表盘既脆又没有信息量。
-- **`tool/release_check.ps1`**：把检查清单前四项机械化的脚本。`dart format` 用的是 **Flutter 自带**的
-  SDK（本机 PATH 上的独立 dart 是 3.11.5，与 Flutter 3.35.5 自带的 3.9.2 不是同一个格式化器，
-  版本不一致时这道门会变成假信号）。`-Apk` 会额外打一次 release 包并用 `aapt` 核对包名、
-  应用名与「不许出现 `INTERNET`」。
+- **`tool/release_check.ps1`**：把检查清单前五项机械化的脚本。第一步是**重跑代码生成再确认
+  工作区没变化**（`*.g.dart` 提交入库，改了 Drift 表定义却忘了重跑 `build_runner` 时，
+  生成物会和源码对不上，而本地 `analyze`、`test` 都不会响——`RecurrenceRules.startsOn` 的
+  文档注释就是这么漏过一次的，靠这条门抓回来）。`dart format` 用的是 **Flutter 自带**的 SDK（本机 PATH 上的独立 dart
+  是 3.11.5，与 Flutter 3.35.5 自带的 3.9.2 不是同一个格式化器，版本不一致时这道门会变成假信号）。
+  `-Apk` 会额外打一次 release 包并用 `aapt` 核对包名、应用名与「不许出现 `INTERNET`」。
 - **商店资料**写在 `docs/STORE.md`：商店里能填的每一项（名称、简短说明、完整说明、更新说明、
   分类、标签、内容分级问卷、数据安全表单）都先写成可直接粘贴的底稿，另附八张截图的拍摄清单
   与 `adb` 命令——截图只能出自真机，模板里不占位假图。
 
 ### 发布检查清单
 
-前四项一条命令：`powershell -File tool/release_check.ps1 -Apk`
+前五项一条命令：`powershell -File tool/release_check.ps1 -Apk`
 
+- [x] `dart run build_runner build` 后工作区无变化（生成产物与源码同步）
 - [x] `dart format --set-exit-if-changed .` 通过（用 Flutter 自带的 dart）
 - [x] `flutter analyze` 零告警
 - [x] `flutter test` 全绿

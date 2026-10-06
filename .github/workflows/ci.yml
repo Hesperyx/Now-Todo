@@ -40,11 +40,17 @@ jobs:
 
       # 生成产物（*.g.dart）提交入库，因此必须校验它与源码同步。
       # 项目约定：改了 Drift 表定义就要重跑 build_runner 并提交产物。
+      #
+      # 失败信息里要带上「到底哪些文件被改动了」：`git diff --quiet` 判的是整棵工作区
+      # （pub get 之类也会让它变脏），只说一句「生成产物不一致」会把人引向错误的排查方向。
+      # 把改动清单塞进 ::error:: 里，GitHub 的注释（check run annotation）就能直接读到。
       - name: 校验代码生成产物与源码一致
         run: |
           dart run build_runner build
           if ! git diff --quiet; then
-            echo "::error::生成的 *.g.dart 与源码不一致。请在本地运行 dart run build_runner build 并提交产物。"
+            dirty="$(git status --porcelain | tr '\n' ',')"
+            stat="$(git diff --stat | tail -n 6 | tr '\n' ';')"
+            echo "::error::build_runner 跑完后工作区有改动，请把产出一起提交。改动：$dirty 统计：$stat"
             git diff --stat
             exit 1
           fi

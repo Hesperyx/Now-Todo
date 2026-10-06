@@ -713,10 +713,14 @@ FocusSessionRepository.watchRunning() ──变化──┐
   末尾的「范围变更记录」）。将来恢复 iOS 时需要重新 `flutter create --platforms=ios .`、
   重新确认 `bundle id`，并按 App Store 审核要求调整捐赠入口（`lib/features/about/about_page.dart`
   里的 iOS 分支与 `AppConstants.donationUrl` 的注释已为此预留）。
-- **发布前检查一条命令**：`powershell -File tool/release_check.ps1 -Apk`——格式校验、静态分析、
-  全部测试，再打一次 release 包用 `aapt` 核对包名、应用名与「不许出现 `INTERNET` 权限」。
+- **发布前检查一条命令**：`powershell -File tool/release_check.ps1 -Apk`——重跑代码生成并确认
+  工作区没有变化、格式校验、静态分析、全部测试，再打一次 release 包用 `aapt` 核对包名、
+  应用名与「不许出现 `INTERNET` 权限」。
   `dart format` 固定用 Flutter 自带的 SDK：独立安装的 dart（本机实测 3.11.5）与 Flutter 3.35.5
   自带的 3.9.2 不是同一个格式化器，用错版本会让这道门变成假信号。
+  生成产物那一步是**生成前后各拍一次工作区快照再比差**：只认生成器带来的变化，
+  手上没写完的改动不会让它误报。这条门值得留在本地——改了 Drift 表的文档注释却忘了重跑
+  `build_runner` 时，`*.g.dart` 会和源码对不上，而 `analyze` 与 `test` 都不会响。
 - 图标与商店特色图片都是脚本生成的（`tool/app_icon/`），产物提交入库；脚本自带安全区自检，
   见 M8 一节的实现说明。商店文案与分级问卷底稿在 [STORE.md](STORE.md)。
 - 发布前检查清单见 [MILESTONES.md](MILESTONES.md) 的 M8。
