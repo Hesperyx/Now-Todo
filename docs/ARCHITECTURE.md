@@ -702,7 +702,12 @@ FocusSessionRepository.watchRunning() ──变化──┐
 ## 13. 构建与发布
 
 - CI（GitHub Actions）在每次 PR 上执行：`dart format` 校验 → `flutter analyze` → `flutter test` → Android debug 构建。
-- **生成的 `*.g.dart` 提交入库**，克隆后可直接构建；CI 校验生成产物与源码一致。
+- **生成的 `*.g.dart` 提交入库**，克隆后可直接构建；CI 与本地发布脚本都会重跑一次
+  `build_runner` 校验生成产物与源码一致。**校验范围只看 `lib/` 与 `test/`**：
+  `pubspec.lock` 里 116 行 `url:` 记的是「依赖从哪个 host 拉下来」，开发机设了
+  `PUB_HOSTED_URL=https://pub.flutter-io.cn` 走镜像、GitHub runner 走 pub.dev，
+  两边会互相改写这些行——依赖版本由 lock 钉着，没有真的变化，判整棵工作区只会让这道门误报。
+  在任何一台机器上手动 diff 时同理：看到 `pubspec.lock` 全是 url 行在动，那不是你改坏了什么。
 - Android 应用身份：`applicationId = "io.github.hesperyx.nowtodo"`（**上架后无法更改**，
   所以跟着不会过期的 GitHub 账号走，而不是域名或自造品牌词）。`namespace` 与它保持一致，
   清单里的 `.MainActivity` / `.FocusWidgetProvider` 按 `namespace` 解析，改一处即可。

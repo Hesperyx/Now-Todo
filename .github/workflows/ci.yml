@@ -41,17 +41,19 @@ jobs:
       # 生成产物（*.g.dart）提交入库，因此必须校验它与源码同步。
       # 项目约定：改了 Drift 表定义就要重跑 build_runner 并提交产物。
       #
-      # 失败信息里要带上「到底哪些文件被改动了」：`git diff --quiet` 判的是整棵工作区
-      # （pub get 之类也会让它变脏），只说一句「生成产物不一致」会把人引向错误的排查方向。
-      # 把改动清单塞进 ::error:: 里，GitHub 的注释（check run annotation）就能直接读到。
+      # 只看 lib/ 与 test/：生成产物与迁移夹具都在这两处。不能判整棵工作区——
+      # pubspec.lock 的 url 字段记的是「这份依赖从哪个 host 拉下来」，开发机走
+      # pub.flutter-io.cn 镜像、CI 走 pub.dev，两边会互相改写这 100 多行，
+      # 于是这道门会在「生成产物其实没问题」的时候变红，还把人往 build_runner 上引。
+      # 失败时把改动清单塞进 ::error::，GitHub 的注释（check run annotation）能直接读到。
       - name: 校验代码生成产物与源码一致
         run: |
           dart run build_runner build
-          if ! git diff --quiet; then
-            dirty="$(git status --porcelain | tr '\n' ',')"
-            stat="$(git diff --stat | tail -n 6 | tr '\n' ';')"
-            echo "::error::build_runner 跑完后工作区有改动，请把产出一起提交。改动：$dirty 统计：$stat"
-            git diff --stat
+          if ! git diff --quiet -- lib test; then
+            dirty="$(git status --porcelain -- lib test | tr '\n' ',')"
+            stat="$(git diff --stat -- lib test | tail -n 6 | tr '\n' ';')"
+            echo "::error::build_runner 跑完后 lib/ 或 test/ 有改动，请把产出一起提交。改动：$dirty 统计：$stat"
+            git diff --stat -- lib test
             exit 1
           fi
 
