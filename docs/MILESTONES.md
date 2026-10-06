@@ -481,8 +481,9 @@ SnackBar 的观感、以及通知栏在那台机器的系统主题下长什么�
 - [x] `flutter test` 全绿
 - [x] 数据库迁移测试覆盖所有历史 `schemaVersion`（v1→v4、v2→v4、v3→v4 与全新安装共 8 条）
 - [x] CI 在 Linux 上跑通同一套门（格式 / 分析 / 测试 / Android debug 构建）—— `main` 上 `1155473`
-      的两个 job 全绿；开发机是 Windows、CI 是 ubuntu，这一步顺带补上了开发机看不见的平台差异
-      （原生 sqlite 库的来源就不同：Windows 退回 `winsqlite3.dll`，Linux 用 `libsqlite3.so.0`）
+      与 `d1d08aa` 两个 job 全绿（run #4 / #5）；开发机是 Windows、CI 是 ubuntu，这一步顺带补上了
+      开发机看不见的平台差异（原生 sqlite 库的来源就不同：Windows 退回 `winsqlite3.dll`，
+      Linux 用 `libsqlite3.so.0`）
 - [ ] 在**全新安装**与**从上一版本升级**两种路径下均手工走查核心流程（首版只需走全新安装）
 - [ ] 在真机上验证：断网可用、通知按时、时区切换后提醒正确
 - [ ] 导出 → 卸载 → 重装 → 导入，数据完整恢复
