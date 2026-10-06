@@ -3,11 +3,12 @@
     Now Todo 发布前的机械检查。
 
 .DESCRIPTION
-    对应 docs/MILESTONES.md 里的「发布检查清单」，把能在机器上验的四项跑一遍：
-      1. dart format --output=none --set-exit-if-changed .
-      2. flutter analyze
-      3. flutter test --concurrency 1（迁移测试也在里面）
-      4. -Apk 时额外打一次 release 包，再用 aapt 核对包名与权限清单
+    对应 docs/MILESTONES.md 里的「发布检查清单」，把能在机器上验的几项跑一遍：
+      1. dart run build_runner build 后工作区没有变化（生成产物与源码同步）
+      2. dart format --output=none --set-exit-if-changed .
+      3. flutter analyze
+      4. flutter test --concurrency 1（迁移测试也在里面）
+      5. -Apk 时额外打一次 release 包，再用 aapt 核对包名与权限清单
          （重点：发布产物里不许出现 INTERNET 权限）
 
     清单里剩下的几条只能在真机上手工走查——全新安装、从上一版升级、断网可用、
@@ -84,6 +85,37 @@ function Invoke-Step {
 }
 
 $failed = 0
+
+# 0. 生成产物必须与源码同步。CI 也拦这一条，而且它抓的正是「改了 Drift 表定义/
+#    文档注释，却忘了重跑 build_runner」——这一类漏掉的症状是仓库里躺着一份
+#    与源码对不上的 *.g.dart，本地 analyze 和 test 都不会响。
+#    做法：生成前后各拍一次工作区快照，**只比较生成器带来的变化**，
+#    这样手上的未完成改动不会让这一步误报。
+$beforeCodegen = @(git status --porcelain -- lib test)
+$codegenExit = Invoke-Step -Name 'release-codegen' -Command $dart `
+    -StepArgs @('run', 'build_runner', 'build')
+$failed += $codegenExit
+
+Write-Host '==> release-codegen-sync' -ForegroundColor Cyan
+if ($codegenExit -ne 0) {
+    Write-Host '    生成器自己就失败了，先看 release-codegen.log' -ForegroundColor Red
+    $script:Results += [pscustomobject]@{ 步骤 = 'release-codegen-sync'; 结果 = 1 }
+    $failed += 1
+}
+else {
+    $afterCodegen = @(git status --porcelain -- lib test)
+    $drift = @(Compare-Object -ReferenceObject $beforeCodegen -DifferenceObject $afterCodegen)
+    if ($drift.Count -gt 0) {
+        Write-Host '    生成产物与源码不一致，把下面这些文件一起提交：' -ForegroundColor Red
+        $drift | ForEach-Object { Write-Host "    $($_.InputObject)" }
+        $script:Results += [pscustomobject]@{ 步骤 = 'release-codegen-sync'; 结果 = 1 }
+        $failed += 1
+    }
+    else {
+        Write-Host '    通过' -ForegroundColor Green
+        $script:Results += [pscustomobject]@{ 步骤 = 'release-codegen-sync'; 结果 = 0 }
+    }
+}
 
 # 1. 格式：--set-exit-if-changed 让「需要改动」直接算失败。
 $failed += Invoke-Step -Name 'release-format' -Command $dart `
