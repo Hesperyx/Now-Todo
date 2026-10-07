@@ -405,7 +405,8 @@ SnackBar 的观感、以及通知栏在那台机器的系统主题下长什么�
 
 ## M8 · 发布准备
 
-**状态**：已完成（2026-10-08）；四条需要设备或控制台的验收挂在下面「只能靠真机的部分」
+**状态**：已完成（2026-10-08）；真机验收自 2026-10-07 起推进，实测证据记在下面
+「真机验收记录」一节，剩下的都写在「只能靠真机的部分」里
 
 **交付物**
 
@@ -413,13 +414,18 @@ SnackBar 的观感、以及通知栏在那台机器的系统主题下长什么�
 - 隐私政策文档（明确不采集任务内容、不强制联网、不默认追踪）。
 - 应用图标与启动图。
 - Android 签名配置、`applicationId` 最终确认。（iOS 签名与 `bundle id` 随 iOS 恢复时再做。）
-- 商店文案、截图、分类与内容分级信息。
+- 商店文案、截图、分类与内容分级信息。（八张截图已在真机上拍完，见 `docs/STORE.md` §5.2）
 - 发布检查清单（见下），前五项由 `tool/release_check.ps1` 一条命令跑完。
 
 **验收标准**
 
-- [ ] 集成测试在真实 Android 设备上通过 —— **用例已就位**（`integration_test/end_to_end_test.dart`
-      两条：界面全流程一条、导出文件往返一条），执行要等设备连线（`adb devices` 当前为空）
+- [x] 集成测试在真实 Android 设备上通过 —— 2026-10-07 在 `PLQ110` 上跑
+      `flutter test integration_test/end_to_end_test.dart -d 3B15BT01KP300000`，
+      两条用例 29 秒全绿（`All tests passed!`）：一条走界面全流程（建任务 → 加标签 → 设提醒 →
+      完成 → 导出），一条把导出的 JSON 落到真文件再整份导进另一个库。命令与踩到的坑写在
+      `integration_test/end_to_end_test.dart` 的文件头；这台 ROM 收掉了 `adb shell` 的
+      `GRANT_RUNTIME_PERMISSIONS` 与 `MANAGE_APP_OPS_MODES`，通知权限靠 `adb install -g` 给，
+      精确闹钟只能在应用内设置页手动放行
 - [x] 隐私政策可公开访问，内容与应用实际行为一致 —— `docs/PRIVACY.md`，托管在公开仓库里即可访问；
       「没有联网权限」这句由打包产物与测试双重保证（见下）
 - [x] `applicationId` 已确认为最终值（**上架后不可更改**）—— `io.github.hesperyx.nowtodo`
@@ -484,17 +490,69 @@ SnackBar 的观感、以及通知栏在那台机器的系统主题下长什么�
       与 `d1d08aa` 两个 job 全绿（run #4 / #5）；开发机是 Windows、CI 是 ubuntu，这一步顺带补上了
       开发机看不见的平台差异（原生 sqlite 库的来源就不同：Windows 退回 `winsqlite3.dll`，
       Linux 用 `libsqlite3.so.0`）
-- [ ] 在**全新安装**与**从上一版本升级**两种路径下均手工走查核心流程（首版只需走全新安装）
+- [x] 在**全新安装**与**从上一版本升级**两种路径下均手工走查核心流程（首版只需走全新安装）——
+      真机上 `adb uninstall` 清干净后装 release 包，冷启动走完首页 / 任务编辑器 / 专注计时 /
+      统计 / 徽章五处界面，`logcat` 无 `FATAL EXCEPTION`、无 ANR；升级路径对首版不适用
 - [ ] 在真机上验证：断网可用、通知按时、时区切换后提醒正确
-- [ ] 导出 → 卸载 → 重装 → 导入，数据完整恢复
+- [ ] 导出 → 卸载 → 重装 → 导入，数据完整恢复（**这台 ROM 有坑**：`adb shell pm clear` 被拒、
+      卸载重装会被系统的自动恢复把数据带回来，走查前先确认重装后库是空的，见 `docs/STORE.md` §5.1）
 
 ### 只能靠真机的部分
 
-- 端到端集成测试的两条用例：`flutter test integration_test/end_to_end_test.dart -d <deviceId>`
-  （先手动授予通知权限，见文件头注释）。
-- 图标与启动图在真机启动器里各遮罩形状下的观感（机械部分已由像素级检查覆盖）。
-- 全新安装走查、断网 / 通知 / 时区三项、导出 → 卸载 → 重装 → 导入。
-- `docs/STORE.md` §5 的八张截图。截图必须出自真机，模板里不放占位图。
+- ~~`docs/STORE.md` §5 的八张截图~~ —— 2026-10-07 在 `PLQ110` 上拍完，
+  文件在 `docs/store/screenshots/01`–`08`，逐张说明见 `docs/STORE.md` §5.2。
+  第 4 张的通知栏展开部分这台 ROM 上用 `adb` 拍不到（下拉只能拉到控制中心），
+  要么人工补拍，要么用 `dumpsys notification` 的文本证据替代。
+- ~~端到端集成测试的两条用例~~ —— 2026-10-07 在 `PLQ110` 上真机跑通，两条全绿，见下。
+- [ ] 图标与启动图在真机启动器里各遮罩形状下的观感（机械部分已由像素级检查覆盖）。
+- [ ] 断网 / 通知 / 时区三项真机走查、导出 → 卸载 → 重装 → 导入。
+- [ ] 生成正式签名密钥并用它重建一份上架包（当前所有图与包都出自 debug 签名）。
+
+### 真机验收记录（2026-10-07，`PLQ110` / Android 16 / API 36 / 1272 × 2800）
+
+设备是 `3B15BT01KP300000`。这一节只记**实测到的**事实，方便复核：
+
+- **包与签名**：`adb install -r -g -d build\app\outputs\flutter-apk\app-arm64-v8a-release.apk` →
+  `Success`；`dumpsys package` 读到 `versionName=1.0.0`、`versionCode=2001`（ABI split 的
+  2000 + 1）、`minSdk=24 targetSdk=36`、`POST_NOTIFICATIONS: granted=true`。
+  `apksigner verify --print-certs` 仍是 `CN=Android Debug`——仓库里没有 `android/key.properties`，
+  按设计退回 debug 签名，所以这一切产物定性为 **1.0.0-rc1 测试包**。
+- **新代码真的在跑**：`am force-stop` + `am start` 后 dump 首页，app bar 上
+  `专注计时` / `搜索` / `筛选` / `排序方式` / `更多` 五个 action 齐全（M5–M8 带来的），
+  `logcat -d` 里 `FATAL EXCEPTION` 与 `ANR in` 都是 0 条。
+- **常驻通知**：`dumpsys notification --noredact` 里 `io.github.hesperyx.nowtodo` 的
+  `id=1` 记录 `flags=ONGOING_EVENT|ONLY_ALERT_ONCE|NO_CLEAR|FOREGROUND_SERVICE`、
+  `channel=now_todo_focus_ongoing`、`category=stopwatch`、`vis=PUBLIC` —— F6a 的两条
+  （锁屏可见、划不掉）在真机上成立。
+- **端到端集成测试**：`flutter test integration_test/end_to_end_test.dart -d 3B15BT01KP300000`
+  → 29 秒、两条用例全绿（`All tests passed!`）。用例跑的是真实启动路径（真库、真通知、真时区），
+  只换掉分享面板那一层；提醒那一步故意绕开界面的时间选择器，从仓储写一条再问系统要
+  `pendingNotificationRequests()`，证明的是「提醒进库 → 系统里真的多了个闹钟」。
+  跑完 `flutter test integration_test/…` 会把应用**卸载**（设备数据一起没），所以涉及演示库的
+  截图排在它前面做，重新播种按 `docs/STORE.md` §5.1。
+- **写这条用例踩到的两个坑**（都写进了用例注释）：
+  - 表单比屏幕长，`ListView` 只挂载视口附近的子节点，没挂载的控件 `find` 匹配不到
+    （`enterText` 抛 `Bad state: No element`）；而且焦点离开输入框后表单会**弹回顶部**，
+    所以「滚到目标」必须先回顶部再往下扫，不能按方向猜。
+  - 导出文件往返那条一开始断言「导出多少条专注记录、目标库就有多少条」，真机上差了 1 条：
+    当时正有一段专注计时在跑。`BackupRepository` 按设计**不搬未结束的会话**（搬过去会凭空
+    多出一段「正在计时」，两条同跑还会让「当前会话」查询抛错），所以断言改成按「已结束的会话」
+    比、并把跳过的条数核对一遍。是测试期望错了，不是产品缺陷。
+- **权限面**：`aapt dump badging` 复核 release 包，权限恰好六条且**没有 `INTERNET`**，
+  「首版不含网络权限」在真机产物上成立。
+- **截图**：§5 八张全部拍完，用的是 `tool/seed/main.dart` 播种出来的演示库
+  （三条清单、四条标签、七条任务、近 84 天专注记录）。
+- **两个必须记住的坑**：
+  - `flutter build apk --release` 会复用 `.dart_tool/flutter_build` 里的旧 AOT——
+    2026-10-06 深夜那次的 release 产物一度被当成新包发出去，里面**没有** M5–M8 的任何界面
+    （`libapp.so` 里搜不到 `专注计时`）。Gradle 只花 4.8 秒就说 `√ Built`，是缓存空转。
+    修法是删掉 `.dart_tool/flutter_build` 与 `build/app/intermediates/flutter` 再构建，
+    并用 `tool/` 之外的脚本在 `libapp.so` 里搜中文串验真（见 `CHANGELOG.md` 与本节上文的尺寸对比）。
+  - 那批陈旧包在设备上建的库 `user_version=1` 却已经是 v4 表结构，被新代码的 `onUpgrade`
+    撞上 `duplicate column name: strong_reminders`。它只可能出现在**从 rc1 预发布包升级**的
+    路径上（正式用户 1.0.0 从零建库写 4），所以 GitHub Release 的说明与 `docs/STORE.md`
+    都要写明：装了 rc1 的机器先卸载再装正式包。
+
 
 ---
 
@@ -948,13 +1006,17 @@ F6b：
 
 依赖驱动的推荐顺序。**不要并行铺开** —— PRD 点名的头号风险就是范围蔓延。
 
-**进度（2026-10-08）**：1 的代码全部落地（只剩真机送达验证）、3 已跑完（F1 / F2 / F3 均已完成，
-F3 第 1、2 条验收待真机复核）、M0–M4 与 M6 已收尾、4 里的 F4 与 F5 也已完成、5 的 F6a 与 F6b
-也已落地（F6c 未做，可选）、6 里的 M7 与 **M8 都已完成**（发布准备：端到端集成测试、隐私政策、
-图标与启动图、正式签名配置与 `applicationId`、商店资料、CHANGELOG 与发布检查脚本）。
-**1.0.0 的功能范围到此为止，剩下的全是真机项**：M6 肉眼走查、F4 滚动手感、M5 送达验证、
-F3 进度显示、F6a 常驻通知、F6b 小组件、M7 分享面板与文件选择器手感、M8 的集成测试与发布清单
-里那三条手工走查，都卡在设备连线上（`adb devices` 当前为空）。
+**进度（2026-10-08）**：1 的代码全部落地（真机送达验证被这台 ROM 的精确闹钟 appop 挡住，
+只能在应用内设置页手动放行）、3 已跑完（F1 / F2 / F3 均已完成，F3 第 1、2 条验收待真机复核）、
+M0–M4 与 M6 已收尾、4 里的 F4 与 F5 也已完成、5 的 F6a 与 F6b 也已落地（F6c 未做，可选）、
+6 里的 M7 与 **M8 都已完成**（发布准备：端到端集成测试、隐私政策、图标与启动图、正式签名配置与
+`applicationId`、商店资料与八张真机截图、CHANGELOG 与发布检查脚本）。
+**1.0.0 的功能范围到此为止，真机侧已于 2026-10-07 走完一轮**：release 包在 `PLQ110` 上冷启动、
+首页到徽章五处界面走查、常驻通知与「无 INTERNET」都有实测证据、八张商店截图拍完、
+端到端集成测试两条用例 29 秒全绿（见 M8「真机验收记录」）。剩下的真机项：M6 肉眼走查、
+F4 滚动手感、M5 送达验证、F3 进度显示、F6b 小组件、M7 分享面板与文件选择器手感、
+M8 发布清单里那两条手工走查（断网 / 通知 / 时区、导出 → 卸载 → 重装 → 导入）、
+以及生成正式签名密钥。
 
 1. **M5 · 本地提醒**（已提为最高优先级）。F 轨的硬前置，也是任务提醒本身欠的债。
 2. **M2 / M3 / M4 / M6 的收尾缺口**（均为 1.0.0 必须）：
@@ -974,7 +1036,11 @@ F3 进度显示、F6a 常驻通知、F6b 小组件、M7 分享面板与文件选
      纯函数；不落表，解锁状态每次现算（详见 F5 一节）。
 5. **F6**：平台能力，按 a → b → c 的性价比顺序。
    - F6a ✅ 已落地：锁屏可见的常驻通知（`visibility: public`）+ `test/android/`
-     的静态防线（详见 F6 一节）。真机验收待设备连线。
+     的静态防线（详见 F6 一节）。真机验收（2026-10-07）：`dumpsys notification --noredact`
+     读到 `flags=ONGOING_EVENT|ONLY_ALERT_ONCE|NO_CLEAR|FOREGROUND_SERVICE`、
+     `channel=now_todo_focus_ongoing`、`category=stopwatch`、`vis=PUBLIC`
+     ——「划不掉」由 `NO_CLEAR` 成立；锁屏那一半只能靠 `vis=PUBLIC` 间接成立，
+     因为这台 ROM 上 `adb` 拍不到通知栏（下拉只出控制中心），也无法在不锁死设备的前提下截锁屏。
    - F6b ✅ 已落地：桌面小组件（`lib/core/widget/` 三个 Dart 文件 +
      `FocusWidgetProvider.kt` / `HomeWidgetBridge.kt` 与四份资源），
      不引 `home_widget`，快照存平台侧 SharedPreferences（详见 F6 一节）。
@@ -984,10 +1050,11 @@ F3 进度显示、F6a 常驻通知、F6b 小组件、M7 分享面板与文件选
      `BackupRepository`（单事务落库、合并 / 覆盖两种模式）、设置页「数据」区块；
      54 条单测（详见 M7 一节）。导出格式覆盖 `focus_sessions`，
      `exportVersion 1` 与 `schemaVersion 4` 各管各的（字段清单见 `docs/ARCHITECTURE.md` §9）。
-   - M8 ✅ 已完成：端到端集成测试（`integration_test/end_to_end_test.dart`）、`docs/PRIVACY.md`、
+   - M8 ✅ 已完成：端到端集成测试（`integration_test/end_to_end_test.dart`，2026-10-07 在
+      `PLQ110` 上两条用例全绿）、`docs/PRIVACY.md`、
      图标与启动图（`tool/app_icon/`）、正式签名配置与 `applicationId`（`io.github.hesperyx.nowtodo`）、
-     `docs/STORE.md`、`CHANGELOG.md` 的 1.0.0 条目、`tool/release_check.ps1`（详见 M8 一节）。
-     真机项列在 M8「只能靠真机的部分」。
+     `docs/STORE.md`（含八张真机截图）、`CHANGELOG.md` 的 1.0.0 条目、`tool/release_check.ps1`
+     （详见 M8 一节）。真机验收记录也在那一节；剩余项列在 M8「只能靠真机的部分」。
 
 ---
 

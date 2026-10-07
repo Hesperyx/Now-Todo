@@ -103,7 +103,7 @@
 | --- | --- | --- |
 | 应用图标 | 512 × 512 PNG，**不带透明通道** | 已生成：`docs/store/icon-512.png` |
 | 特色图片 | 1024 × 500 PNG/JPEG | 已生成：`docs/store/feature-graphic.png` |
-| 手机截图 | 2–8 张，竖版，最短边 ≥ 320px | **待拍**，清单见 §5 |
+| 手机截图 | 2–8 张，竖版，最短边 ≥ 320px | 已生成 8 张：`docs/store/screenshots/01`–`08`，清单见 §5、已拍结果见 §5.2 |
 | 平板截图 | 可选 | 不做：首版不专门为平板排版 |
 
 图标与特色图片都由脚本生成，不是手绘，所以改品牌色时重新跑一遍即可：
@@ -158,6 +158,41 @@ python tool/app_icon/generate_store_assets.py  # 特色图片
 `docs/store/screenshots/NN-名称.png`（竖版 1080 × 1920 起，机型 `PLQ110` 实测 1272 × 2800 可用）。
 先造一批演示数据，别用空白库拍——空库截图等于没有截图。
 
+### 5.1 先造演示数据
+
+`tool/seed/main.dart` 就是为截图写的播种入口：往应用那个真库里写三条清单、四个标签、
+七条任务（含一条每周重复、一条带三个子任务、一条带提醒）和近 84 天、每天 0–3 段的专注
+记录，跑完把结果写进设备上的 `seed-report.txt`。它不进正式包，只在本机跑：
+
+```bash
+flutter build apk --debug -t tool/seed/main.dart
+adb install -r -g -d build\app\outputs\flutter-apk\app-debug.apk
+adb shell am start -n io.github.hesperyx.nowtodo/.MainActivity   # 启动即播种
+adb pull /storage/emulated/0/Android/data/io.github.hesperyx.nowtodo/files/seed-report.txt
+```
+
+播种完**换回发布包**：包名与签名相同，`-r` 保留数据，`-g` 顺手把通知权限再授一次。
+
+```bash
+adb install -r -g -d build\app\outputs\flutter-apk\app-arm64-v8a-release.apk
+```
+
+清空演示数据（换成 `clear` 再跑一遍上面三步）：
+
+```bash
+flutter run -t tool/seed/main.dart -d <deviceId> --dart-define=SEED_ACTION=clear
+```
+
+两个坑，都实测踩过：
+
+- **不要用 `flutter test integration_test/… -d <deviceId>` 播种**：集成测试跑完会卸载应用，
+  数据跟着一起没。要数据就别走集成测试这条路。
+- **`adb shell pm clear` 不一定可用**：部分 ROM 收掉了 shell 的 `CLEAR_APP_USER_DATA`，会报
+  `SecurityException: … does not have permission android.permission.CLEAR_APP_USER_DATA`；
+  换上面的清理路径就行。另外卸载重装**可能被系统的自动恢复把数据带回来**（
+  `dumpsys backup` 里看到 `Auto-restore is enabled` 就先关掉它），所以 §6 第 4 条
+  「导出 → 卸载 → 重装 → 导入」务必先确认重装后库是空的。
+
 | # | 画面 | 要准备的演示数据 | 说明 |
 | --- | --- | --- | --- |
 | 1 | 今日视图 | 4–5 条今天的任务，其中 1 条已完成，带优先级与标签 | 第一张要让别人一眼看懂这是什么应用 |
@@ -178,6 +213,48 @@ adb -s <deviceId> exec-out screencap -p > docs/store/screenshots/01-today.png
 注意：截图里不要出现真实的私人任务内容与通知；拍完检查一遍
 `screencap` 的产物是否含系统通知栏里的其他应用信息。
 
+### 5.2 已拍结果（2026-10-07，真机 `PLQ110` / Android 16，1272 × 2800）
+
+八张都在 `docs/store/screenshots/`，用的是 §5.1 播种出来的演示库 + 新构建的 release 包：
+
+| 文件 | 画面状态 |
+| --- | --- |
+| `01-today.png` | 今天视图，四条今天的任务（一条带 `1/3` 子任务进度与 `深度工作` 标签、一条带备注） |
+| `02-task-detail.png` | 任务详情：优先级四档 + 清单选择 + 标签 + 三个子任务 + 一条提醒（`改重复方式` / `删除提醒` / `添加提醒` 都在） |
+| `03-recurrence-scope.png` | 编辑每周重复任务的重复设置后点保存，停在「改动应用到哪？」的 `仅此一次` / `此后全部` 对话框 |
+| `04-focus-running.png` | 专注页倒计时进行中（百分比 + 剩余时间 + `放弃` / `暂停` / `结束`），**画面里没有通知栏**（原因见下） |
+| `05-stats.png` | 统计页：最近一年 22 小时 55 分 / 59 次、连续 10 天、高效时段 9 点、最近 7 天柱状图、专注日历月视图 |
+| `06-year-heatmap.png` | 专注日历年视图（最近一年，2025-10-08 起），四个有记录的月份 + 底部五档图例 |
+| `07-achievements.png` | 徽章页：已解锁 7 / 14，解锁与未解锁混排（`早起鸟`、`一天四段` 未解锁） |
+| `08-dark-today.png` | 深色模式下的今天视图，顶部还挂着「专注进行中 · 剩余时间」的返回条 |
+
+第 4 张的通知栏部分**拍不了**：这台 ROM 上用 `adb shell cmd statusbar expand-notifications`
+或从顶部下滑打开的都是**控制中心**（只有磁贴、媒体卡、亮度条，没有通知列表），从屏幕左半边
+下拉也没有反应，`uiautomator` 抓到的节点里一条通知行都没有。要通知栏入镜只能人工用手指
+下拉再按一次 `build\shot.ps1 -Name 04-focus-running`；不想拍的话，常驻通知的存在性可以用
+文本证据替代（FGS 类型、`ONGOING_EVENT | NO_CLEAR`、`visibility = public`、通道
+`now_todo_focus_ongoing`）：
+
+```bash
+adb -s <deviceId> shell dumpsys notification --noredact | findstr /C:"nowtodo"
+```
+
+深色那张是切系统夜间模式拍的，拍完记得切回来：
+
+```bash
+adb -s <deviceId> shell cmd uimode night yes   # 拍 08 之前
+adb -s <deviceId> shell cmd uimode night no    # 拍完切回浅色
+```
+
+本机还有两个一次性助手脚本放在 `build\` 里（`build/` 不入库，换机器要重写）：
+
+- `build\shot.ps1 -Name 01-today`：把当前屏幕存成 `docs/store/screenshots/01-today.png`
+  （内部走 `cmd /c` 重定向——PowerShell 的 `>` 会按文本编码写，把 PNG 写坏）。
+- `build\ui.ps1 -Serial <deviceId> -Dump`：`uiautomator dump` 之后按「文字 类名 中心坐标」
+  列出当前界面的节点；`-Tap <文字>` 只对短文本有效，任务卡片那种多行 `content-desc`
+  匹配不到，要从 `-Dump` 读出坐标再 `adb shell input tap X Y`。用之前先看 dump 出来的包名，
+  这台手机上抓到的可能是别的应用。
+
 ---
 
 ## 6 上架前仍需人工完成
@@ -191,5 +268,6 @@ adb -s <deviceId> exec-out screencap -p > docs/store/screenshots/01-today.png
 4. 导出 → 卸载 → 重装 → 导入，确认数据能完整回来。
 5. 生成正式签名密钥：照 `android/key.properties.example` 的步骤做，
    **密钥文件与密码务必单独备份**——丢了就再也发不出覆盖更新。
-6. 按 §5 拍截图，按 §2 填文案，按 §4 填两份问卷。
+6. 按 §2 填文案，按 §4 填两份问卷。截图已在 §5.2 备好（第 4 张若要把通知栏拍进去，
+   按 §5.2 的说明人工补拍一次）。
 7. 把 `docs/PRIVACY.md` 的 GitHub 链接填进商店的隐私政策字段（§1 已给出 URL）。
